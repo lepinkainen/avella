@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+
+# Binary
+avella
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test coverage
+coverage.out

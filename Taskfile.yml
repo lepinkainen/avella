@@ -1,0 +1,88 @@
+version: '3'
+
+vars:
+  BUILD_DIR: build
+  PROJECT_NAME: avella
+  VERSION:
+    sh: |
+      tag=$(git describe --tags 2>/dev/null || echo "dev")
+      commit=$(git log -n 1 --format=%h 2>/dev/null || echo "none")
+      if [ "$tag" = "dev" ]; then
+        echo "dev-$(date '+%Y-%m-%d_%H:%M:%S')"
+      else
+        echo "$tag-$commit"
+      fi
+
+tasks:
+  build:
+    desc: Build the project
+    deps: [test, lint]
+    cmds:
+      - task: build-go
+
+  build-linux:
+    desc: Build for Linux
+    deps: [test, lint]
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - task: build-go
+
+  build-ci:
+    desc: Build for CI/CD (build only)
+    cmds:
+      - task: build-go
+
+  test:
+    desc: Run tests
+    cmds:
+      - task: test-go
+
+  test-ci:
+    desc: Run tests with coverage for CI
+    cmds:
+      - task: test-go-ci
+
+  lint:
+    desc: Lint code
+    cmds:
+      - task: lint-go
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - mkdir -p {{.BUILD_DIR}}
+
+  build-go:
+    desc: Build Go project
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -v -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} main.go
+    sources:
+      - ./*.go
+    generates:
+      - "{{.BUILD_DIR}}/{{.PROJECT_NAME}}"
+
+  test-go:
+    desc: Run Go tests
+    cmds:
+      - go test $(go list ./... | grep -v llm-shared)
+
+  test-go-ci:
+    desc: Run Go tests with coverage for CI
+    cmds:
+      - go test -tags=ci -cover -v $(go list ./... | grep -v llm-shared)
+
+  lint-go:
+    desc: Lint Go code
+    cmds:
+      - find . -name "*.go" -not -path "./llm-shared/*" -exec goimports -w {} +
+      - go vet $(go list ./... | grep -v llm-shared)
+      - golangci-lint run
+
+  dev:
+    desc: Run in development mode
+    cmds:
+      - go run main.go --config config.yaml

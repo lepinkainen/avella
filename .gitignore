@@ -15,3 +15,6 @@ avella
 
 # Test coverage
 coverage.out
+
+config.yaml
+.task/

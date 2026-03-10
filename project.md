@@ -201,8 +201,8 @@ func waitForStableFile(path string) {
 }
 
 Optional improvements:
-	•	ignore extensions like .part, .tmp, .download
-	•	require stability for multiple cycles
+ • ignore extensions like .part, .tmp, .download
+ • require stability for multiple cycles
 
 ⸻
 
@@ -311,9 +311,9 @@ func main() {
 }
 
 Possible enhancements:
-	•	icon changes when processing files
-	•	display rule activity
-	•	show number of pending files
+ • icon changes when processing files
+ • display rule activity
+ • show number of pending files
 
 ⸻
 
@@ -332,21 +332,21 @@ Example:
 ~/Library/LaunchAgents/com.user.hazellite.plist
 
 This ensures:
-	•	automatic startup
-	•	restart on crash
+ • automatic startup
+ • restart on crash
 
 ⸻
 
 Future Improvements
 
 Possible enhancements:
-	•	rule testing CLI
-	•	dry-run mode
-	•	logging system
-	•	retry queue for failed uploads
-	•	per-rule concurrency limits
-	•	metrics / Prometheus
-	•	optional Web UI
+ • rule testing CLI
+ • dry-run mode
+ • logging system
+ • retry queue for failed uploads
+ • per-rule concurrency limits
+ • metrics / Prometheus
+ • optional Web UI
 
 ⸻
 

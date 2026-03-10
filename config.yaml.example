@@ -1,0 +1,52 @@
+# Avella configuration example
+# Default location: ~/.config/avella/config.yaml
+# Override with: avella -c /path/to/config.yaml
+
+# Directories to watch for new files
+watch:
+  - ~/Downloads
+
+# SSH hosts for SCP actions (optional)
+ssh_hosts:
+  seedbox:
+    host: seedbox.example.com
+    user: user
+    key: ~/.ssh/id_rsa
+
+# Rules are evaluated top-down, first match wins.
+# Each rule needs a name, match criteria, and at least one action.
+rules:
+  # Upload torrent files to a seedbox
+  - name: torrents
+    match:
+      filename_regex: ".*\\.torrent$"
+    actions:
+      - scp:
+          host: seedbox
+          dest: /torrents/incoming/
+
+  # Sort video files into a media folder
+  - name: video_files
+    match:
+      filename_regex: ".*\\.(mkv|mp4|avi)$"
+      min_size: 1048576  # 1 MB — skip tiny/broken files
+    actions:
+      - move:
+          dest: ~/Media/Unsorted/
+
+  # Run a script on subtitle files
+  - name: subtitles
+    match:
+      filename_regex: ".*\\.srt$"
+    actions:
+      - exec:
+          command: /usr/local/bin/subtitle_tool
+
+  # Move old large files out of Downloads
+  - name: old_downloads
+    match:
+      min_age_seconds: 604800  # 7 days
+      min_size: 104857600      # 100 MB
+    actions:
+      - move:
+          dest: ~/Archive/

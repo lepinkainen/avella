@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Avella launchd agent template.
+
+  Install:
+    cp xyz.endymion.avella.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/xyz.endymion.avella.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella.plist
+    rm ~/Library/LaunchAgents/xyz.endymion.avella.plist
+
+  Customize the ProgramArguments path to match your avella binary location.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>xyz.endymion.avella</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/avella</string>
+        <string>--config</string>
+        <string>~/.config/avella/config.yaml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>~/Library/Logs/avella.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>~/Library/Logs/avella.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

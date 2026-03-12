@@ -59,7 +59,7 @@ tasks:
     desc: Build Go project
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -v -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} main.go
+      - go build -v -tags systray -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} main.go
     sources:
       - ./**/*.go
     generates:
@@ -81,13 +81,6 @@ tasks:
       - find . -name "*.go" -not -path "./llm-shared/*" -exec goimports -w {} +
       - go vet $(go list ./... | grep -v llm-shared)
       - golangci-lint run
-
-  build-systray:
-    desc: Build with systray support (requires CGO on macOS)
-    deps: [test, lint]
-    cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -v -tags systray -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}}-systray main.go
 
   dev:
     desc: Run in development mode

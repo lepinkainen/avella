@@ -10,13 +10,15 @@ import (
 	"github.com/lepinkainen/avella/config"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // Pool manages cached SSH connections keyed by host alias.
 type Pool struct {
-	hosts map[string]config.SSH
-	mu    sync.Mutex
-	conns map[string]*ssh.Client
+	hosts      map[string]config.SSH
+	mu         sync.Mutex
+	conns      map[string]*ssh.Client
+	agentConns []net.Conn // agent socket connections to close on shutdown
 }
 
 // NewPool creates a pool from the configured SSH hosts.
@@ -36,14 +38,9 @@ func (p *Pool) dial(name string) (*ssh.Client, error) {
 		return nil, fmt.Errorf("unknown SSH host %q", name)
 	}
 
-	keyData, err := os.ReadFile(hostCfg.Key)
+	authMethod, err := p.authMethod(hostCfg)
 	if err != nil {
-		return nil, fmt.Errorf("read SSH key %s: %w", hostCfg.Key, err)
-	}
-
-	signer, err := ssh.ParsePrivateKey(keyData)
-	if err != nil {
-		return nil, fmt.Errorf("parse SSH key %s: %w", hostCfg.Key, err)
+		return nil, err
 	}
 
 	addr := hostCfg.Host
@@ -54,7 +51,7 @@ func (p *Pool) dial(name string) (*ssh.Client, error) {
 
 	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
 		User:            hostCfg.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		Auth:            []ssh.AuthMethod{authMethod},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // user-configured hosts
 	})
 	if err != nil {
@@ -63,6 +60,37 @@ func (p *Pool) dial(name string) (*ssh.Client, error) {
 
 	slog.Info("SSH connected", "host", name, "addr", addr)
 	return client, nil
+}
+
+// authMethod returns the SSH auth method for a host config.
+// If a key file is configured, it uses public key auth.
+// Otherwise, it falls back to the SSH agent (e.g. 1Password, ssh-agent).
+func (p *Pool) authMethod(hostCfg config.SSH) (ssh.AuthMethod, error) {
+	if hostCfg.Key != "" {
+		keyData, err := os.ReadFile(hostCfg.Key)
+		if err != nil {
+			return nil, fmt.Errorf("read SSH key %s: %w", hostCfg.Key, err)
+		}
+		signer, err := ssh.ParsePrivateKey(keyData)
+		if err != nil {
+			return nil, fmt.Errorf("parse SSH key %s: %w", hostCfg.Key, err)
+		}
+		return ssh.PublicKeys(signer), nil
+	}
+
+	sock := os.Getenv("SSH_AUTH_SOCK")
+	if sock == "" {
+		return nil, fmt.Errorf("no SSH key configured and SSH_AUTH_SOCK not set")
+	}
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		return nil, fmt.Errorf("connect to SSH agent at %s: %w", sock, err)
+	}
+
+	agentClient := agent.NewClient(conn)
+	p.agentConns = append(p.agentConns, conn)
+	return ssh.PublicKeysCallback(agentClient.Signers), nil
 }
 
 // getConn returns a cached or new SSH connection for the named host.
@@ -119,5 +147,11 @@ func (p *Pool) Close() error {
 		}
 		delete(p.conns, name)
 	}
+	for _, conn := range p.agentConns {
+		if err := conn.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("close SSH agent conn: %w", err)
+		}
+	}
+	p.agentConns = nil
 	return firstErr
 }

@@ -14,7 +14,7 @@ import (
 var ErrFileRemoved = errors.New("file removed during stabilization")
 
 // SkipExtensions are file extensions that indicate incomplete downloads.
-var SkipExtensions = []string{".part", ".tmp", ".crdownload", ".download"}
+var SkipExtensions = []string{".part", ".tmp", ".crdownload", ".download", ".kextraction"}
 
 // ShouldSkip returns true if the file has an extension indicating it's still downloading.
 func ShouldSkip(path string) bool {

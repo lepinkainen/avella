@@ -7,11 +7,24 @@ watch:
   - ~/Downloads
 
 # SSH hosts for SCP actions (optional)
+# If 'key' is omitted, the SSH agent (SSH_AUTH_SOCK) is used — works with
+# 1Password, ssh-agent, gpg-agent, etc.
 ssh_hosts:
   seedbox:
     host: seedbox.example.com
     user: user
-    key: ~/.ssh/id_rsa
+    # key: ~/.ssh/id_rsa  # optional — omit to use SSH agent
+
+# Files matching any ignore rule are silently skipped before stabilization.
+# This suppresses noisy warnings for app-specific temp files that vanish quickly.
+# Supports: filename_regex, filename_glob, min_age (Go duration), min_age_seconds, min_size, max_size
+ignored:
+  keka_temp:
+    match:
+      filename_regex: "\.kextraction$"  # Keka extraction temp files
+  partial_downloads:
+    match:
+      filename_glob: "*.part"           # Firefox/wget partial downloads
 
 # Rules are evaluated top-down, first match wins.
 # Each rule needs a name, match criteria, and at least one action.
@@ -24,15 +37,26 @@ rules:
       - scp:
           host: seedbox
           dest: /torrents/incoming/
+          delete_source: true  # remove local file after successful upload
 
-  # Sort video files into a media folder
+  # Sort video files into date+type folders (e.g. "2025-09 Video")
+  # Available template variables:
+  #   {{.Filename}} — base filename (e.g. "movie.mkv")
+  #   {{.Year}}     — four-digit year from file modification time
+  #   {{.Month}}    — two-digit month
+  #   {{.Day}}      — two-digit day
+  #   {{.Ext}}      — file extension without dot (e.g. "mkv")
+  #   {{.Type}}     — file category: Video, Image, Audio, Document, Archive, or Other
   - name: video_files
     match:
       filename_regex: ".*\\.(mkv|mp4|avi)$"
       min_size: 1048576  # 1 MB — skip tiny/broken files
     actions:
       - move:
-          dest: ~/Media/Unsorted/
+          dest: "~/Media/{{.Year}}-{{.Month}} {{.Type}}/"
+    on_success:
+      - notify:
+          message: "Sorted {{.Filename}}"
 
   # Run a script on subtitle files
   - name: subtitles
@@ -42,10 +66,36 @@ rules:
       - exec:
           command: /usr/local/bin/subtitle_tool
 
+  # Sort ZIP downloads — validate before moving
+  # validate_zip mode: "true" checks ZIP structure (fast),
+  #                    "full" also verifies CRC-32 checksums (thorough)
+  # If validate_zip fails, on_fail actions run instead.
+  - name: zip_downloads
+    match:
+      filename_regex: ".*\\.zip$"
+    actions:
+      - validate_zip:
+          mode: "true"
+      - move:
+          dest: "~/Archives/{{.Year}}-{{.Month}}/"
+    on_fail:
+      - notify:
+          message: "{{.Filename}} is a corrupt ZIP file"
+
+  # Sort PDFs but only if they've been around for at least an hour
+  # (gives you time to handle freshly-downloaded files manually)
+  - name: sort_pdfs
+    match:
+      filename_regex: ".*\\.pdf$"
+      min_age: 1h              # human-friendly Go duration (e.g. 30m, 2h, 24h)
+    actions:
+      - move:
+          dest: ~/Documents/PDFs/{{.Filename}}
+
   # Move old large files out of Downloads
   - name: old_downloads
     match:
-      min_age_seconds: 604800  # 7 days
+      min_age_seconds: 604800  # 7 days (or use: min_age: 168h)
       min_size: 104857600      # 100 MB
     actions:
       - move:

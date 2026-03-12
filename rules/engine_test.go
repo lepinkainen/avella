@@ -36,7 +36,7 @@ func TestEngineFirstMatchWins(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngine(rules, nil, false)
+	engine, err := NewEngine(rules, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestEngineNoMatch(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngine(rules, nil, false)
+	engine, err := NewEngine(rules, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestEngineCorrectRuleSelected(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngine(rules, nil, false)
+	engine, err := NewEngine(rules, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestEngineDryRun(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngine(rules, nil, true)
+	engine, err := NewEngine(rules, nil, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestEngineBadRegex(t *testing.T) {
 		},
 	}
 
-	_, err := NewEngine(rules, nil, false)
+	_, err := NewEngine(rules, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for bad regex")
 	}

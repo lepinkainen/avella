@@ -28,14 +28,14 @@ func TestMatchesRegex(t *testing.T) {
 	re := regexp.MustCompile(`.*\.mkv$`)
 	rule := config.MatchRule{FilenameRegex: `.*\.mkv$`}
 
-	if !Matches(path, info, rule, re) {
+	if !Matches(path, info, rule, re, 0) {
 		t.Error("expected match for .mkv file")
 	}
 
 	reNoMatch := regexp.MustCompile(`.*\.txt$`)
 	ruleNoMatch := config.MatchRule{FilenameRegex: `.*\.txt$`}
 
-	if Matches(path, info, ruleNoMatch, reNoMatch) {
+	if Matches(path, info, ruleNoMatch, reNoMatch, 0) {
 		t.Error("expected no match for .txt regex on .mkv file")
 	}
 }
@@ -52,12 +52,12 @@ func TestMatchesMinAge(t *testing.T) {
 	info, _ := os.Stat(path)
 
 	rule := config.MatchRule{MinAgeSeconds: 60}
-	if !Matches(path, info, rule, nil) {
+	if !Matches(path, info, rule, nil, 0) {
 		t.Error("expected match for file older than 60s")
 	}
 
 	rule = config.MatchRule{MinAgeSeconds: 7200}
-	if Matches(path, info, rule, nil) {
+	if Matches(path, info, rule, nil, 0) {
 		t.Error("expected no match for file younger than 7200s")
 	}
 }
@@ -69,25 +69,25 @@ func TestMatchesSize(t *testing.T) {
 
 	// MinSize pass
 	rule := config.MatchRule{MinSize: 100}
-	if !Matches(path, info, rule, nil) {
+	if !Matches(path, info, rule, nil, 0) {
 		t.Error("expected match for file >= 100 bytes")
 	}
 
 	// MinSize fail
 	rule = config.MatchRule{MinSize: 1000}
-	if Matches(path, info, rule, nil) {
+	if Matches(path, info, rule, nil, 0) {
 		t.Error("expected no match for file < 1000 bytes")
 	}
 
 	// MaxSize pass
 	rule = config.MatchRule{MaxSize: 1000}
-	if !Matches(path, info, rule, nil) {
+	if !Matches(path, info, rule, nil, 0) {
 		t.Error("expected match for file <= 1000 bytes")
 	}
 
 	// MaxSize fail
 	rule = config.MatchRule{MaxSize: 100}
-	if Matches(path, info, rule, nil) {
+	if Matches(path, info, rule, nil, 0) {
 		t.Error("expected no match for file > 100 bytes")
 	}
 }
@@ -110,13 +110,13 @@ func TestMatchesCombined(t *testing.T) {
 		MaxSize:       1000,
 	}
 
-	if !Matches(path, info, rule, re) {
+	if !Matches(path, info, rule, re, 0) {
 		t.Error("expected match for combined predicates")
 	}
 
 	// Fail one predicate
 	rule.MinSize = 500
-	if Matches(path, info, rule, re) {
+	if Matches(path, info, rule, re, 0) {
 		t.Error("expected no match when one predicate fails")
 	}
 }
@@ -127,7 +127,7 @@ func TestMatchesEmptyRule(t *testing.T) {
 	info, _ := os.Stat(path)
 
 	rule := config.MatchRule{}
-	if !Matches(path, info, rule, nil) {
+	if !Matches(path, info, rule, nil, 0) {
 		t.Error("empty match rule should match everything")
 	}
 }

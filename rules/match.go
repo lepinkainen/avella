@@ -11,14 +11,25 @@ import (
 
 // Matches returns true if the file at path satisfies all predicates in the match rule.
 // All specified predicates are AND-combined.
-func Matches(path string, info os.FileInfo, rule config.MatchRule, regex *regexp.Regexp) bool {
+// minAge overrides rule.MinAgeSeconds when > 0 (caller pre-parses min_age string).
+func Matches(path string, info os.FileInfo, rule config.MatchRule, regex *regexp.Regexp, minAge time.Duration) bool {
 	if regex != nil && !regex.MatchString(filepath.Base(path)) {
 		return false
 	}
 
-	if rule.MinAgeSeconds > 0 {
-		age := time.Since(info.ModTime())
-		if age < time.Duration(rule.MinAgeSeconds)*time.Second {
+	if rule.FilenameGlob != "" {
+		matched, _ := filepath.Match(rule.FilenameGlob, filepath.Base(path))
+		if !matched {
+			return false
+		}
+	}
+
+	effectiveMinAge := minAge
+	if effectiveMinAge == 0 && rule.MinAgeSeconds > 0 {
+		effectiveMinAge = time.Duration(rule.MinAgeSeconds) * time.Second
+	}
+	if effectiveMinAge > 0 {
+		if time.Since(info.ModTime()) < effectiveMinAge {
 			return false
 		}
 	}

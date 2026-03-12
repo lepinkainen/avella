@@ -21,6 +21,7 @@ type Watcher struct {
 	fsw            *fsnotify.Watcher
 	stableInterval time.Duration
 	stableChecks   int
+	IgnoreFunc     func(path string) bool // optional; called before stabilization
 }
 
 // New creates a Watcher that monitors the given directories.
@@ -77,6 +78,11 @@ func (w *Watcher) Start(ctx context.Context) <-chan string {
 
 				if stabilizer.ShouldSkip(path) {
 					slog.Debug("skipping temporary file", "path", path)
+					continue
+				}
+
+				if w.IgnoreFunc != nil && w.IgnoreFunc(path) {
+					slog.Debug("ignoring file (config)", "path", path)
 					continue
 				}
 

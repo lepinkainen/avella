@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"strings"
+
 	"github.com/alecthomas/kong"
 	"github.com/lepinkainen/avella/config"
 	"github.com/lepinkainen/avella/rules"
@@ -77,7 +79,7 @@ func main() {
 		}()
 	}
 
-	engine, err := rules.NewEngine(cfg.Rules, sshPool, cli.DryRun)
+	engine, err := rules.NewEngine(cfg.Rules, cfg.Ignored, sshPool, cli.DryRun)
 	if err != nil {
 		slog.Error("failed to create rule engine", "error", err)
 		os.Exit(1)
@@ -96,6 +98,10 @@ func main() {
 	}
 
 	u := ui.New()
+	u.SetRules(ruleInfoFromConfig(cfg.Rules))
+	u.SetDryRunToggle(cli.DryRun, func(enabled bool) {
+		engine.SetDryRun(enabled)
+	})
 	u.Run(ctx, stop, func(ctx context.Context) {
 		runDaemon(ctx, cfg, engine, u)
 	})
@@ -120,6 +126,10 @@ func runOnce(ctx context.Context, cfg *config.Config, engine *rules.Engine) {
 				slog.Debug("skipping temporary file", "path", path)
 				continue
 			}
+			if engine.ShouldIgnore(path) {
+				slog.Debug("ignoring file (config)", "path", path)
+				continue
+			}
 			if err := engine.Process(ctx, path); err != nil {
 				slog.Error("failed to process file", "path", path, "error", err)
 			}
@@ -140,6 +150,7 @@ func runDaemon(ctx context.Context, cfg *config.Config, engine *rules.Engine, u 
 		}
 	}()
 
+	w.IgnoreFunc = engine.ShouldIgnore
 	files := w.Start(ctx)
 
 	slog.Info("avella running, press Ctrl+C to stop")
@@ -148,6 +159,22 @@ func runDaemon(ctx context.Context, cfg *config.Config, engine *rules.Engine, u 
 		if err := engine.Process(ctx, path); err != nil {
 			slog.Error("failed to process file", "path", path, "error", err)
 		}
+		u.IncProcessed()
 		u.SetStatus("Idle")
 	}
+}
+
+func ruleInfoFromConfig(cfgRules []config.Rule) []ui.RuleInfo {
+	infos := make([]ui.RuleInfo, len(cfgRules))
+	for i, r := range cfgRules {
+		types := make([]string, 0, len(r.Actions))
+		for _, ac := range r.Actions {
+			types = append(types, ac.TypeName())
+		}
+		infos[i] = ui.RuleInfo{
+			Name:       r.Name,
+			ActionType: strings.Join(types, "+"),
+		}
+	}
+	return infos
 }

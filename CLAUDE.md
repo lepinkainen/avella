@@ -24,15 +24,17 @@ Binary outputs to `build/avella`. Version injected via ldflags at build time.
 
 ## Architecture
 
-Processing pipeline: **fsnotify event → skip temp files → wait for stable size → evaluate rules (first match wins) → execute actions**
+Processing pipeline: **fsnotify event → skip temp files → wait for stable size → evaluate rules (first match wins) → execute actions → on_success/on_fail hooks**
 
 | Package | Role |
 |---------|------|
 | `config/` | YAML config loading via Viper, path expansion (`~`), validation |
 | `watcher/` | fsnotify wrapper, debounces events, hands off to stabilizer |
 | `stabilizer/` | Polls file size until stable (2s interval, 3 checks). Skips `.part/.tmp/.crdownload/.download` |
-| `rules/` | Pre-compiles regexes at init. `engine.Process()` evaluates rules, first match wins, dispatches actions |
-| `actions/` | `Action` interface. `MoveAction` (rename, cross-device fallback), `ExecAction` (runs command with file as arg). SCP not yet implemented |
+| `rules/` | Pre-compiles regexes at init. `engine.Process()` evaluates rules, first match wins, dispatches actions, runs on_success/on_fail hooks |
+| `actions/` | `Action` interface. `MoveAction` (rename, cross-device fallback), `ExecAction` (runs command with file as arg), `SCPAction` (SFTP upload), `ValidateZipAction` (ZIP integrity check), `NotifyAction` (macOS notification via osascript). `Describer` interface for resolved dry-run output |
+| `template/` | Go `text/template` path expansion with file metadata (`Filename`, `Year`, `Month`, `Day`, `Ext`, `Type`). Extension-based file type classification (Video, Image, Audio, Document, Archive, Other) |
+| `ssh/` | SSH connection pool with lazy dial, keepalive health checks, SFTP client. Used by `SCPAction` |
 | `internal/pathutil/` | `ExpandHome()` for tilde expansion |
 
 `main.go` wires everything together: kong CLI → config → engine → watcher → process loop. Graceful shutdown via SIGINT/SIGTERM context.

@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/lepinkainen/avella/template"
 )
 
 // MoveAction moves a file to a destination directory.
@@ -17,15 +19,31 @@ type MoveAction struct {
 
 func (a *MoveAction) String() string { return fmt.Sprintf("move → %s", a.Dest) }
 
+// Describe returns the resolved destination for a specific file.
+func (a *MoveAction) Describe(path string) string {
+	dest, err := template.ResolveDest(a.Dest, path)
+	if err != nil {
+		return a.String()
+	}
+	return fmt.Sprintf("move → %s", dest)
+}
+
 // Execute moves the file at path to the destination directory.
+// The Dest field may contain Go template placeholders (e.g. {{.Year}}, {{.Type}})
+// that are resolved using the file's metadata before the move.
 func (a *MoveAction) Execute(_ context.Context, path string) error {
-	if err := os.MkdirAll(a.Dest, 0o755); err != nil {
-		return fmt.Errorf("create dest dir %s: %w", a.Dest, err)
+	destDir, err := template.ResolveDest(a.Dest, path)
+	if err != nil {
+		return fmt.Errorf("resolve dest for %s: %w", path, err)
 	}
 
-	dest := filepath.Join(a.Dest, filepath.Base(path))
+	if mkdirErr := os.MkdirAll(destDir, 0o755); mkdirErr != nil {
+		return fmt.Errorf("create dest dir %s: %w", destDir, mkdirErr)
+	}
 
-	err := os.Rename(path, dest)
+	dest := filepath.Join(destDir, filepath.Base(path))
+
+	err = os.Rename(path, dest)
 	if err == nil {
 		slog.Info("moved file", "src", path, "dest", dest)
 		return nil

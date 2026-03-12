@@ -149,7 +149,7 @@ rules:
 `)
 
 	_, err := Load(cfgPath)
-	if err == nil {
-		t.Fatal("expected error for rule with no actions")
+	if err != nil {
+		t.Fatalf("rules with no actions should be valid: %v", err)
 	}
 }

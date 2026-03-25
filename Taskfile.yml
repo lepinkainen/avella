@@ -19,6 +19,7 @@ tasks:
     deps: [test, lint]
     cmds:
       - task: build-go
+      - task: build-tray
 
   build-linux:
     desc: Build for Linux
@@ -55,11 +56,29 @@ tasks:
       - rm -rf {{.BUILD_DIR}}
       - mkdir -p {{.BUILD_DIR}}
 
+  build-tray:
+    desc: Build Swift menu bar app and package as .app bundle
+    dir: tray
+    cmds:
+      - swift build -c release
+      - mkdir -p ../{{.BUILD_DIR}}/AvellaTray.app/Contents/MacOS
+      - mkdir -p ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources
+      - cp .build/release/AvellaTray ../{{.BUILD_DIR}}/AvellaTray.app/Contents/MacOS/
+      - cp Info.plist ../{{.BUILD_DIR}}/AvellaTray.app/Contents/
+      - cp Sources/AvellaTray/Resources/icon.png ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources/
+      - codesign --sign - --force ../{{.BUILD_DIR}}/AvellaTray.app
+    sources:
+      - tray/Sources/**/*.swift
+      - tray/Package.swift
+      - tray/Info.plist
+    generates:
+      - "{{.BUILD_DIR}}/AvellaTray.app/Contents/MacOS/AvellaTray"
+
   build-go:
     desc: Build Go project
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -v -tags systray -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} main.go
+      - go build -v -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} main.go
     sources:
       - ./**/*.go
     generates:
@@ -68,19 +87,43 @@ tasks:
   test-go:
     desc: Run Go tests
     cmds:
-      - go test $(go list ./... | grep -v llm-shared)
+      - go test $(go list ./... | grep -v -e llm-shared -e tray)
 
   test-go-ci:
     desc: Run Go tests with coverage for CI
     cmds:
-      - go test -tags=ci -cover -v $(go list ./... | grep -v llm-shared)
+      - go test -tags=ci -cover -v $(go list ./... | grep -v -e llm-shared -e tray)
 
   lint-go:
     desc: Lint Go code
     cmds:
-      - find . -name "*.go" -not -path "./llm-shared/*" -exec goimports -w {} +
-      - go vet $(go list ./... | grep -v llm-shared)
+      - find . -name "*.go" -not -path "./llm-shared/*" -not -path "./tray/*" -exec goimports -w {} +
+      - go vet $(go list ./... | grep -v -e llm-shared -e tray)
       - golangci-lint run
+
+  install:
+    desc: Build and install binaries and load launchd agents
+    deps: [build]
+    cmds:
+      - sudo cp build/avella /usr/local/bin/avella
+      - sudo rm -rf /Applications/AvellaTray.app
+      - sudo cp -R build/AvellaTray.app /Applications/
+      - cp xyz.endymion.avella.plist ~/Library/LaunchAgents/
+      - cp xyz.endymion.avella-tray.plist ~/Library/LaunchAgents/
+      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella.plist 2>/dev/null || true
+      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist 2>/dev/null || true
+      - launchctl load ~/Library/LaunchAgents/xyz.endymion.avella.plist
+      - launchctl load ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
+
+  uninstall:
+    desc: Unload launchd agents and remove binaries
+    cmds:
+      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella.plist || true
+      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist || true
+      - rm -f ~/Library/LaunchAgents/xyz.endymion.avella.plist
+      - rm -f ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
+      - sudo rm -f /usr/local/bin/avella
+      - sudo rm -rf /Applications/AvellaTray.app
 
   dev:
     desc: Run in development mode

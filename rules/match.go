@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/lepinkainen/avella/config"
+	avtemplate "github.com/lepinkainen/avella/template"
 )
 
 // Matches returns true if the file at path satisfies all predicates in the match rule.
@@ -20,6 +22,13 @@ func Matches(path string, info os.FileInfo, rule config.MatchRule, regex *regexp
 	if rule.FilenameGlob != "" {
 		matched, _ := filepath.Match(rule.FilenameGlob, filepath.Base(path))
 		if !matched {
+			return false
+		}
+	}
+
+	if rule.FileType != "" {
+		ext := strings.TrimPrefix(filepath.Ext(path), ".")
+		if !strings.EqualFold(avtemplate.ClassifyExt(ext), rule.FileType) {
 			return false
 		}
 	}

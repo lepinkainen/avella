@@ -99,7 +99,7 @@ func TestWaitStableContextCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	go func() {
 		time.Sleep(15 * time.Millisecond)

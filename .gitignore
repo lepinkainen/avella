@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+tray/.build/
 
 # Binary
 avella

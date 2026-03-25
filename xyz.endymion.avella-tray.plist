@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Avella tray (menu bar) launchd agent.
+
+  Install:
+    cp xyz.endymion.avella-tray.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
+    rm ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
+
+  Customize the ProgramArguments path to match your avella-tray binary location.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>xyz.endymion.avella-tray</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/AvellaTray.app/Contents/MacOS/AvellaTray</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/shrike/Library/Logs/avella-tray.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/shrike/Library/Logs/avella-tray.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

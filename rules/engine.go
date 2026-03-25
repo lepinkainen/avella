@@ -147,11 +147,19 @@ func (e *Engine) ShouldIgnore(path string) bool {
 	return false
 }
 
+// ProcessResult describes what happened when a file was processed.
+type ProcessResult struct {
+	Matched  bool     // true if a rule matched
+	RuleName string   // name of the matched rule
+	Actions  []string // human-readable description of each action
+	DryRun   bool     // true if dry-run mode was active
+}
+
 // Process evaluates a file against all rules. First match wins.
-func (e *Engine) Process(ctx context.Context, path string) error {
+func (e *Engine) Process(ctx context.Context, path string) (ProcessResult, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("stat %s: %w", path, err)
+		return ProcessResult{}, fmt.Errorf("stat %s: %w", path, err)
 	}
 
 	dryRun := e.DryRun()
@@ -159,7 +167,7 @@ func (e *Engine) Process(ctx context.Context, path string) error {
 	for _, cr := range e.rules {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return ProcessResult{}, ctx.Err()
 		default:
 		}
 
@@ -173,33 +181,55 @@ func (e *Engine) Process(ctx context.Context, path string) error {
 			continue // no actions — pass-through rule (e.g. validation-only)
 		}
 
+		// Collect descriptions before executing (file may be moved/gone after).
+		descs := describeActions(cr.actions, path)
+
+		result := ProcessResult{
+			Matched:  true,
+			RuleName: cr.name,
+			Actions:  descs,
+			DryRun:   dryRun,
+		}
+
 		if dryRun {
 			logDryRun(cr.name, "action", cr.actions, path)
 			logDryRun(cr.name, "on_success", cr.onSuccess, path)
 			logDryRun(cr.name, "on_fail", cr.onFail, path)
-			return nil
+			return result, nil
 		}
 
 		var actionErr error
 		for _, action := range cr.actions {
-			if err := action.Execute(ctx, path); err != nil {
-				slog.Error("action failed", "rule", cr.name, "path", path, "error", err)
-				actionErr = fmt.Errorf("rule %q action failed: %w", cr.name, err)
+			if execErr := action.Execute(ctx, path); execErr != nil {
+				slog.Error("action failed", "rule", cr.name, "path", path, "error", execErr)
+				actionErr = fmt.Errorf("rule %q action failed: %w", cr.name, execErr)
 				break
 			}
 		}
 
 		if actionErr != nil {
 			runHooks(ctx, cr.name, "on_fail", cr.onFail, path)
-			return actionErr
+			return result, actionErr
 		}
 
 		runHooks(ctx, cr.name, "on_success", cr.onSuccess, path)
-		return nil // first match wins
+		return result, nil // first match wins
 	}
 
 	slog.Debug("no rule matched", "path", path)
-	return nil
+	return ProcessResult{}, nil
+}
+
+func describeActions(acts []actions.Action, path string) []string {
+	descs := make([]string, len(acts))
+	for i, action := range acts {
+		desc := fmt.Sprint(action)
+		if d, ok := action.(actions.Describer); ok {
+			desc = d.Describe(path)
+		}
+		descs[i] = desc
+	}
+	return descs
 }
 
 func logDryRun(ruleName, list string, acts []actions.Action, path string) {

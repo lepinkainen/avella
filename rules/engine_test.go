@@ -41,7 +41,7 @@ func TestEngineFirstMatchWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := engine.Process(context.Background(), path); err != nil {
+	if _, err := engine.Process(context.Background(), path); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestEngineNoMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := engine.Process(context.Background(), path); err != nil {
+	if _, err := engine.Process(context.Background(), path); err != nil {
 		t.Fatalf("unexpected error for no-match: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestEngineCorrectRuleSelected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := engine.Process(context.Background(), path); err != nil {
+	if _, err := engine.Process(context.Background(), path); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -151,7 +151,8 @@ func TestEngineDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := engine.Process(context.Background(), path); err != nil {
+	result, err := engine.Process(context.Background(), path)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -161,6 +162,20 @@ func TestEngineDryRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(destDir, "test.torrent")); !os.IsNotExist(err) {
 		t.Error("file should not have been moved in dry-run mode")
+	}
+
+	// ProcessResult should reflect dry-run match.
+	if !result.Matched {
+		t.Error("expected Matched=true")
+	}
+	if result.RuleName != "torrents" {
+		t.Errorf("RuleName = %q, want torrents", result.RuleName)
+	}
+	if !result.DryRun {
+		t.Error("expected DryRun=true")
+	}
+	if len(result.Actions) != 1 {
+		t.Fatalf("Actions len = %d, want 1", len(result.Actions))
 	}
 }
 

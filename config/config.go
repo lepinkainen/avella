@@ -44,6 +44,7 @@ type Rule struct {
 type MatchRule struct {
 	FilenameRegex string `mapstructure:"filename_regex"`
 	FilenameGlob  string `mapstructure:"filename_glob"`
+	FileType      string `mapstructure:"file_type"` // Video, Image, Audio, Document, Archive, Other
 	MinAge        string `mapstructure:"min_age"`
 	MinAgeSeconds int    `mapstructure:"min_age_seconds"`
 	MinSize       int64  `mapstructure:"min_size"`
@@ -202,6 +203,12 @@ func validateMatchRule(_ string, m MatchRule) error {
 	if m.FilenameGlob != "" {
 		if _, err := filepath.Match(m.FilenameGlob, "test"); err != nil {
 			return fmt.Errorf("invalid glob %q: %w", m.FilenameGlob, err)
+		}
+	}
+	if m.FileType != "" {
+		valid := map[string]bool{"Video": true, "Image": true, "Audio": true, "Document": true, "Archive": true, "Other": true}
+		if !valid[m.FileType] {
+			return fmt.Errorf("invalid file_type %q: must be one of Video, Image, Audio, Document, Archive, Other", m.FileType)
 		}
 	}
 	if m.MinAge != "" {

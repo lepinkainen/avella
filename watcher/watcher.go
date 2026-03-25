@@ -94,9 +94,7 @@ func (w *Watcher) Start(ctx context.Context) <-chan string {
 				pending[path] = true
 				mu.Unlock()
 
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					defer func() {
 						mu.Lock()
 						delete(pending, path)
@@ -114,7 +112,7 @@ func (w *Watcher) Start(ctx context.Context) <-chan string {
 					case out <- path:
 					case <-ctx.Done():
 					}
-				}()
+				})
 
 			case err, ok := <-w.fsw.Errors:
 				if !ok {

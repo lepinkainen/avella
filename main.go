@@ -7,12 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"syscall"
-
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/lepinkainen/avella/config"
+	"github.com/lepinkainen/avella/internal/pathutil"
 	"github.com/lepinkainen/avella/rules"
 	"github.com/lepinkainen/avella/ssh"
 	"github.com/lepinkainen/avella/stabilizer"
@@ -98,7 +99,12 @@ func main() {
 	}
 
 	u := ui.New()
+	u.SetVersion(Version)
 	u.SetRules(ruleInfoFromConfig(cfg.Rules))
+	if expandedCfgPath, err := pathutil.ExpandHome(cfgPath); err == nil {
+		cfgPath = expandedCfgPath
+	}
+	u.SetConfigPath(cfgPath)
 	u.SetDryRunToggle(cli.DryRun, func(enabled bool) {
 		engine.SetDryRun(enabled)
 	})
@@ -109,8 +115,7 @@ func main() {
 	slog.Info("shutting down")
 }
 
-func runOnce(ctx context.Context, cfg *config.Config, engine *rules.Engine) {
-	slog.Info("running once, processing existing files")
+func processExistingFiles(ctx context.Context, cfg *config.Config, engine *rules.Engine, u ui.UI) {
 	for _, dir := range cfg.Watch {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -130,11 +135,20 @@ func runOnce(ctx context.Context, cfg *config.Config, engine *rules.Engine) {
 				slog.Debug("ignoring file (config)", "path", path)
 				continue
 			}
-			if err := engine.Process(ctx, path); err != nil {
+			result, err := engine.Process(ctx, path)
+			if err != nil {
 				slog.Error("failed to process file", "path", path, "error", err)
+			}
+			if u != nil && result.Matched {
+				addRecentFromResult(u, path, result)
 			}
 		}
 	}
+}
+
+func runOnce(ctx context.Context, cfg *config.Config, engine *rules.Engine) {
+	slog.Info("running once, processing existing files")
+	processExistingFiles(ctx, cfg, engine, nil)
 	slog.Info("done")
 }
 
@@ -153,15 +167,36 @@ func runDaemon(ctx context.Context, cfg *config.Config, engine *rules.Engine, u 
 	w.IgnoreFunc = engine.ShouldIgnore
 	files := w.Start(ctx)
 
+	slog.Info("processing existing files in watch directories")
+	processExistingFiles(ctx, cfg, engine, u)
+
 	slog.Info("avella running, press Ctrl+C to stop")
 	for path := range files {
 		u.SetStatus("Processing " + path)
-		if err := engine.Process(ctx, path); err != nil {
+		result, err := engine.Process(ctx, path)
+		if err != nil {
 			slog.Error("failed to process file", "path", path, "error", err)
+		}
+		if result.Matched {
+			addRecentFromResult(u, path, result)
 		}
 		u.IncProcessed()
 		u.SetStatus("Idle")
 	}
+}
+
+func addRecentFromResult(u ui.UI, path string, result rules.ProcessResult) {
+	action := ""
+	if len(result.Actions) > 0 {
+		action = result.Actions[0]
+	}
+	u.AddRecentFile(ui.RecentFile{
+		Filename: filepath.Base(path),
+		Rule:     result.RuleName,
+		Action:   action,
+		DryRun:   result.DryRun,
+		Time:     time.Now().Format(time.RFC3339),
+	})
 }
 
 func ruleInfoFromConfig(cfgRules []config.Rule) []ui.RuleInfo {

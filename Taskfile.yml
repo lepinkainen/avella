@@ -39,6 +39,7 @@ tasks:
     desc: Run tests
     cmds:
       - task: test-go
+      - task: test-tray
 
   test-ci:
     desc: Run tests with coverage for CI
@@ -65,7 +66,7 @@ tasks:
       - mkdir -p ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources
       - cp .build/release/AvellaTray ../{{.BUILD_DIR}}/AvellaTray.app/Contents/MacOS/
       - cp Info.plist ../{{.BUILD_DIR}}/AvellaTray.app/Contents/
-      - cp Sources/AvellaTray/Resources/icon.png ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources/
+      - cp Sources/AvellaTrayLib/Resources/icon.png ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources/
       - codesign --sign - --force ../{{.BUILD_DIR}}/AvellaTray.app
     sources:
       - tray/Sources/**/*.swift
@@ -93,6 +94,12 @@ tasks:
     desc: Run Go tests with coverage for CI
     cmds:
       - go test -tags=ci -cover -v $(go list ./... | grep -v -e llm-shared -e tray)
+
+  test-tray:
+    desc: Run Swift tray unit tests
+    dir: tray
+    cmds:
+      - swift test
 
   lint-go:
     desc: Lint Go code

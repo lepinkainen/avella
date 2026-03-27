@@ -1,4 +1,5 @@
 import AppKit
+import AvellaTrayLib
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

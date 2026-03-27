@@ -5,10 +5,20 @@ let package = Package(
     name: "AvellaTray",
     platforms: [.macOS(.v13)],
     targets: [
+        .target(
+            name: "AvellaTrayLib",
+            path: "Sources/AvellaTrayLib",
+            resources: [.process("Resources")]
+        ),
         .executableTarget(
             name: "AvellaTray",
-            path: "Sources/AvellaTray",
-            resources: [.process("Resources")]
+            dependencies: ["AvellaTrayLib"],
+            path: "Sources/AvellaTray"
+        ),
+        .testTarget(
+            name: "AvellaTrayTests",
+            dependencies: ["AvellaTrayLib"],
+            path: "Tests/AvellaTrayTests"
         ),
     ]
 )

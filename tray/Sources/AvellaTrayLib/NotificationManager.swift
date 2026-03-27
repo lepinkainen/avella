@@ -6,9 +6,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
     private var notificationsEnabled: Bool
-    private var lastSeenFiles: [RecentFile] = []
-    private var firstUpdate = true
-    private var setupDone = false
+    var lastSeenFiles: [RecentFile] = []
+    var firstUpdate = true
+    var setupDone = false
 
     var isEnabled: Bool { notificationsEnabled }
 
@@ -69,7 +69,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Private
 
-    private func countNewFiles(current: [RecentFile], previous: [RecentFile]) -> Int {
+    func countNewFiles(current: [RecentFile], previous: [RecentFile]) -> Int {
         guard let firstOld = previous.first else { return current.count }
         for (i, file) in current.enumerated() {
             if file.filename == firstOld.filename

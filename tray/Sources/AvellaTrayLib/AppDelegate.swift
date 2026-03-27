@@ -1,12 +1,12 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var menuManager: MenuManager!
     private var socketClient: SocketClient!
     private let notificationManager = NotificationManager.shared
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         notificationManager.setup()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -35,6 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        socketClient.onProtocolMismatch = { [weak self] version in
+            self?.menuManager.setProtocolMismatch(
+                daemon: version, tray: supportedProtocolVersion
+            )
+        }
+
         menuManager.onToggleDryRun = { [weak self] in
             self?.socketClient.send(command: "toggle_dry_run")
         }
@@ -59,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         socketClient.start()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    public func applicationWillTerminate(_ notification: Notification) {
         socketClient.stop()
     }
 

@@ -97,6 +97,24 @@ final class MenuManager {
         applyDisconnectedState()
     }
 
+    func setProtocolMismatch(daemon: Int, tray: Int) {
+        connected = false
+        statusMenuItem.title = "Protocol mismatch (daemon v\(daemon), tray v\(tray))"
+        statusMenuItem.isEnabled = false
+        processedMenuItem.title = "Update tray or daemon to match"
+        processedMenuItem.isEnabled = false
+        recentMenuItem.isEnabled = false
+        recentMenuItem.submenu = nil
+        dryRunMenuItem.isEnabled = false
+        rulesMenuItem.isEnabled = false
+        rulesMenuItem.submenu = nil
+        openConfigMenuItem.isEnabled = false
+
+        quitMenuItem.isEnabled = true
+        quitMenuItem.target = self
+        quitMenuItem.action = #selector(quitClicked)
+    }
+
     // MARK: - Private
 
     private func buildMenu() {

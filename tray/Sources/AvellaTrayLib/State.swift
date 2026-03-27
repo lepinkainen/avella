@@ -54,10 +54,41 @@ struct RuleInfo: Codable {
     }
 }
 
+/// The protocol version this client supports. Must match the daemon.
+let supportedProtocolVersion = 1
+
+/// Hello handshake data sent by the daemon on connect.
+struct HelloData: Codable {
+    let protocolVersion: Int
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion = "protocol_version"
+    }
+}
+
 /// Envelope for messages received from the server.
 struct ServerMessage: Codable {
     let type: String
     let data: AppState?
+}
+
+/// Envelope with raw data for flexible decoding of different message types.
+struct RawServerMessage: Codable {
+    let type: String
+
+    /// Parse a JSON line into a typed message, extracting the data field
+    /// as raw bytes for type-specific decoding.
+    static func parse(_ lineData: Data) -> (type: String, data: Data?)? {
+        guard let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+              let type = obj["type"] as? String else {
+            return nil
+        }
+        guard let dataVal = obj["data"] else {
+            return (type: type, data: nil)
+        }
+        let dataBytes = try? JSONSerialization.data(withJSONObject: dataVal)
+        return (type: type, data: dataBytes)
+    }
 }
 
 /// Command sent from the tray to the daemon.

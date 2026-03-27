@@ -8,12 +8,13 @@ final class SocketClient {
     private var outputStream: OutputStream?
     private var readThread: Thread?
     private var reconnectTimer: Timer?
-    private var backoff: TimeInterval = 1.0
-    private let maxBackoff: TimeInterval = 10.0
-    private var stopping = false
+    var backoff: TimeInterval = 1.0
+    let maxBackoff: TimeInterval = 10.0
+    var stopping = false
 
     var onStateUpdate: ((AppState) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
+    var onProtocolMismatch: ((Int) -> Void)?
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -141,6 +142,7 @@ final class SocketClient {
         let bufferSize = 4096
         var buffer = [UInt8](repeating: 0, count: bufferSize)
         var leftover = Data()
+        var handshakeDone = false
 
         while !Thread.current.isCancelled && input.streamStatus != .closed {
             guard input.hasBytesAvailable else {
@@ -157,17 +159,38 @@ final class SocketClient {
 
             // Split on newlines.
             while let newlineIndex = leftover.firstIndex(of: UInt8(ascii: "\n")) {
-                let lineData = leftover[leftover.startIndex..<newlineIndex]
+                let lineData = Data(leftover[leftover.startIndex..<newlineIndex])
                 leftover = Data(leftover[leftover.index(after: newlineIndex)...])
 
                 guard !lineData.isEmpty else { continue }
-                let decoder = JSONDecoder()
-                if let msg = try? decoder.decode(ServerMessage.self, from: lineData),
-                   msg.type == "state",
-                   let appState = msg.data {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onStateUpdate?(appState)
+                guard let parsed = RawServerMessage.parse(lineData) else { continue }
+
+                switch parsed.type {
+                case "hello":
+                    if let data = parsed.data,
+                       let hello = try? JSONDecoder().decode(HelloData.self, from: data) {
+                        if hello.protocolVersion != supportedProtocolVersion {
+                            let ver = hello.protocolVersion
+                            DispatchQueue.main.async { [weak self] in
+                                self?.onProtocolMismatch?(ver)
+                            }
+                            // Incompatible — disconnect without reconnect.
+                            return
+                        }
+                        handshakeDone = true
                     }
+
+                case "state":
+                    guard handshakeDone else { continue }
+                    if let data = parsed.data,
+                       let appState = try? JSONDecoder().decode(AppState.self, from: data) {
+                        DispatchQueue.main.async { [weak self] in
+                            self?.onStateUpdate?(appState)
+                        }
+                    }
+
+                default:
+                    break
                 }
             }
         }
@@ -179,7 +202,7 @@ final class SocketClient {
         }
     }
 
-    private func scheduleReconnect() {
+    func scheduleReconnect() {
         guard !stopping else { return }
         reconnectTimer?.invalidate()
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: backoff, repeats: false) { [weak self] _ in

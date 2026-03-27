@@ -18,6 +18,13 @@ import (
 const defaultSocketDir = ".cache/avella"
 const socketFileName = "avella.sock"
 
+// ProtocolVersion is the current socket protocol version.
+// Bump this when the protocol changes in incompatible ways.
+const ProtocolVersion = 1
+
+// errDaemonRunning is returned when another daemon instance owns the socket.
+var errDaemonRunning = errors.New("another avella daemon is already running")
+
 // socketMessage is the envelope for all messages on the wire.
 type socketMessage struct {
 	Type    string          `json:"type"`
@@ -125,8 +132,13 @@ func (u *SocketUI) Run(ctx context.Context, cancel context.CancelFunc, daemon fu
 	}
 	u.sockPath = sockPath
 
-	// Clean up stale socket file.
+	// Clean up stale socket file or detect a running daemon.
 	if staleErr := removeStaleSocket(sockPath); staleErr != nil {
+		if errors.Is(staleErr, errDaemonRunning) {
+			slog.Error("cannot start: another daemon is already running", "path", sockPath)
+			cancel()
+			return
+		}
 		slog.Error("failed to remove stale socket", "path", sockPath, "error", staleErr)
 		daemon(ctx)
 		return
@@ -178,7 +190,7 @@ func removeStaleSocket(path string) error {
 	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
 	if err == nil {
 		_ = conn.Close()
-		return fmt.Errorf("another avella daemon is already running (socket %s is active)", path)
+		return fmt.Errorf("socket %s is active: %w", path, errDaemonRunning)
 	}
 	// Socket file exists but nothing is listening — remove it.
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -200,8 +212,10 @@ func (u *SocketUI) acceptLoop(ctx context.Context) {
 		slog.Debug("tray client connected", "remote", conn.RemoteAddr())
 		u.mu.Lock()
 		u.clients[conn] = struct{}{}
-		u.sendStateLocked(conn)
 		u.mu.Unlock()
+
+		// Send hello handshake and initial state outside the lock.
+		u.sendHelloAndState(conn)
 
 		go u.handleClient(ctx, conn)
 	}
@@ -269,37 +283,99 @@ func (u *SocketUI) handleCommand(cmd string) {
 	}
 }
 
-// broadcastLocked sends the current state to all connected clients.
-// Must be called with u.mu held.
+// broadcastLocked snapshots state and clients under the lock, then writes
+// outside the lock so slow clients cannot block state mutations.
+// Must be called with u.mu held; the lock is temporarily released during I/O.
 func (u *SocketUI) broadcastLocked() {
+	line := u.marshalStateLine()
+	if line == nil {
+		return
+	}
+	clients := make([]net.Conn, 0, len(u.clients))
 	for conn := range u.clients {
-		u.sendStateLocked(conn)
+		clients = append(clients, conn)
+	}
+
+	u.mu.Unlock()
+	failed := writeToClients(clients, line)
+	u.mu.Lock()
+
+	for _, conn := range failed {
+		delete(u.clients, conn)
+		_ = conn.Close()
 	}
 }
 
-// sendStateLocked sends the current state to a single client.
-// Must be called with u.mu held.
-func (u *SocketUI) sendStateLocked(conn net.Conn) {
+// marshalStateLine returns the JSON-encoded state message with a trailing
+// newline, ready to write to a client. Must be called with u.mu held.
+func (u *SocketUI) marshalStateLine() []byte {
 	data, err := json.Marshal(u.st)
 	if err != nil {
 		slog.Error("failed to marshal state", "error", err)
-		return
+		return nil
 	}
 	msg := socketMessage{Type: "state", Data: data}
 	line, err := json.Marshal(msg)
 	if err != nil {
 		slog.Error("failed to marshal message", "error", err)
+		return nil
+	}
+	return append(line, '\n')
+}
+
+// writeToClients writes line to each conn and returns any that failed.
+func writeToClients(clients []net.Conn, line []byte) []net.Conn {
+	var failed []net.Conn
+	for _, conn := range clients {
+		_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		if _, writeErr := conn.Write(line); writeErr != nil {
+			slog.Debug("failed to write to tray client", "error", writeErr)
+			failed = append(failed, conn)
+		}
+		_ = conn.SetWriteDeadline(time.Time{})
+	}
+	return failed
+}
+
+// sendHelloAndState writes the hello handshake and initial state to a new
+// client. Called without holding u.mu; acquires the lock to read state.
+func (u *SocketUI) sendHelloAndState(conn net.Conn) {
+	hello := socketMessage{Type: "hello", Data: json.RawMessage(
+		fmt.Sprintf(`{"protocol_version":%d}`, ProtocolVersion),
+	)}
+	helloLine, err := json.Marshal(hello)
+	if err != nil {
+		slog.Error("failed to marshal hello", "error", err)
 		return
 	}
-	line = append(line, '\n')
+	helloLine = append(helloLine, '\n')
+
+	u.mu.Lock()
+	stateLine := u.marshalStateLine()
+	u.mu.Unlock()
 
 	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	if _, writeErr := conn.Write(line); writeErr != nil {
-		slog.Debug("failed to write to tray client", "error", writeErr)
-		delete(u.clients, conn)
-		_ = conn.Close()
+	if _, writeErr := conn.Write(helloLine); writeErr != nil {
+		slog.Debug("failed to write hello to tray client", "error", writeErr)
+		u.removeClient(conn)
+		return
+	}
+	if stateLine != nil {
+		if _, writeErr := conn.Write(stateLine); writeErr != nil {
+			slog.Debug("failed to write state to tray client", "error", writeErr)
+			u.removeClient(conn)
+			return
+		}
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
+}
+
+// removeClient removes a connection from the client set and closes it.
+func (u *SocketUI) removeClient(conn net.Conn) {
+	u.mu.Lock()
+	delete(u.clients, conn)
+	u.mu.Unlock()
+	_ = conn.Close()
 }
 
 func (u *SocketUI) cleanup() {

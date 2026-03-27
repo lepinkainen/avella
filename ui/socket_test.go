@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -53,33 +54,39 @@ func startTestServer(t *testing.T) (*SocketUI, string, context.CancelFunc) {
 	return u, sockPath, cancel
 }
 
-func dial(t *testing.T, sockPath string) net.Conn {
+// testClient wraps a connection with a persistent scanner so buffered reads
+// don't lose data between calls.
+type testClient struct {
+	conn    net.Conn
+	scanner *bufio.Scanner
+}
+
+func dial(t *testing.T, sockPath string) *testClient {
 	t.Helper()
 	conn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return conn
+	return &testClient{conn: conn, scanner: bufio.NewScanner(conn)}
 }
 
-func readMessage(t *testing.T, conn net.Conn) socketMessage {
+func readMessage(t *testing.T, tc *testClient) socketMessage {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	scanner := bufio.NewScanner(conn)
-	if !scanner.Scan() {
-		t.Fatal("expected message, got none:", scanner.Err())
+	_ = tc.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if !tc.scanner.Scan() {
+		t.Fatal("expected message, got none:", tc.scanner.Err())
 	}
 	var msg socketMessage
-	if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+	if err := json.Unmarshal(tc.scanner.Bytes(), &msg); err != nil {
 		t.Fatal("unmarshal:", err)
 	}
 	return msg
 }
 
-func readState(t *testing.T, conn net.Conn) state {
+func readState(t *testing.T, tc *testClient) state {
 	t.Helper()
-	msg := readMessage(t, conn)
+	msg := readMessage(t, tc)
 	if msg.Type != "state" {
 		t.Fatalf("expected type=state, got %q", msg.Type)
 	}
@@ -90,9 +97,35 @@ func readState(t *testing.T, conn net.Conn) state {
 	return st
 }
 
+// readHello reads and validates the hello handshake message.
+func readHello(t *testing.T, tc *testClient) {
+	t.Helper()
+	msg := readMessage(t, tc)
+	if msg.Type != "hello" {
+		t.Fatalf("expected type=hello, got %q", msg.Type)
+	}
+	var hello struct {
+		ProtocolVersion int `json:"protocol_version"`
+	}
+	if err := json.Unmarshal(msg.Data, &hello); err != nil {
+		t.Fatal("unmarshal hello:", err)
+	}
+	if hello.ProtocolVersion != ProtocolVersion {
+		t.Fatalf("protocol_version = %d, want %d", hello.ProtocolVersion, ProtocolVersion)
+	}
+}
+
+// connectAndConsumeHello dials the socket and consumes the hello message.
+func connectAndConsumeHello(t *testing.T, sockPath string) *testClient {
+	t.Helper()
+	tc := dial(t, sockPath)
+	readHello(t, tc)
+	return tc
+}
+
 func TestSnapshotOnConnect(t *testing.T) {
 	_, sockPath, _ := startTestServer(t)
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 
 	st := readState(t, conn)
 	if st.Status != "Idle" {
@@ -108,7 +141,7 @@ func TestSnapshotOnConnect(t *testing.T) {
 
 func TestStateUpdateBroadcast(t *testing.T) {
 	u, sockPath, _ := startTestServer(t)
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 
 	// Consume initial snapshot.
 	_ = readState(t, conn)
@@ -124,7 +157,7 @@ func TestStateUpdateBroadcast(t *testing.T) {
 
 func TestIncProcessedBroadcast(t *testing.T) {
 	u, sockPath, _ := startTestServer(t)
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 
 	_ = readState(t, conn)
 
@@ -151,12 +184,12 @@ func TestToggleDryRunCommand(t *testing.T) {
 		toggledTo = enabled
 	}
 
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 	_ = readState(t, conn)
 
 	// Send toggle command.
 	cmd := `{"type":"command","command":"toggle_dry_run"}` + "\n"
-	if _, err := conn.Write([]byte(cmd)); err != nil {
+	if _, err := conn.conn.Write([]byte(cmd)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,9 +208,9 @@ func TestToggleDryRunCommand(t *testing.T) {
 func TestClientDisconnectDoesNotCrash(t *testing.T) {
 	u, sockPath, _ := startTestServer(t)
 
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 	_ = readState(t, conn)
-	conn.Close()
+	conn.conn.Close()
 
 	// Give the server a moment to process the disconnect.
 	time.Sleep(50 * time.Millisecond)
@@ -186,7 +219,7 @@ func TestClientDisconnectDoesNotCrash(t *testing.T) {
 	u.SetStatus("still running")
 
 	// A new client should be able to connect.
-	conn2 := dial(t, sockPath)
+	conn2 := connectAndConsumeHello(t, sockPath)
 	st := readState(t, conn2)
 	if st.Status != "still running" {
 		t.Errorf("status = %q, want 'still running'", st.Status)
@@ -196,8 +229,8 @@ func TestClientDisconnectDoesNotCrash(t *testing.T) {
 func TestMultipleClients(t *testing.T) {
 	u, sockPath, _ := startTestServer(t)
 
-	conn1 := dial(t, sockPath)
-	conn2 := dial(t, sockPath)
+	conn1 := connectAndConsumeHello(t, sockPath)
+	conn2 := connectAndConsumeHello(t, sockPath)
 
 	_ = readState(t, conn1)
 	_ = readState(t, conn2)
@@ -216,7 +249,7 @@ func TestMultipleClients(t *testing.T) {
 
 func TestAddRecentFileBroadcast(t *testing.T) {
 	u, sockPath, _ := startTestServer(t)
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 
 	_ = readState(t, conn)
 
@@ -246,7 +279,7 @@ func TestAddRecentFileBroadcast(t *testing.T) {
 
 func TestRecentFilesCapsAtTen(t *testing.T) {
 	u, sockPath, _ := startTestServer(t)
-	conn := dial(t, sockPath)
+	conn := connectAndConsumeHello(t, sockPath)
 
 	_ = readState(t, conn)
 
@@ -274,5 +307,103 @@ func TestRecentFilesCapsAtTen(t *testing.T) {
 	// Oldest kept (file2) should be last.
 	if st.RecentFiles[9].Filename != "file2.txt" {
 		t.Errorf("last recent = %q, want file2.txt", st.RecentFiles[9].Filename)
+	}
+}
+
+func TestHelloHandshakeOnConnect(t *testing.T) {
+	_, sockPath, _ := startTestServer(t)
+	conn := dial(t, sockPath)
+
+	// First message must be hello with protocol version.
+	msg := readMessage(t, conn)
+	if msg.Type != "hello" {
+		t.Fatalf("expected type=hello, got %q", msg.Type)
+	}
+	var hello struct {
+		ProtocolVersion int `json:"protocol_version"`
+	}
+	if err := json.Unmarshal(msg.Data, &hello); err != nil {
+		t.Fatal("unmarshal hello:", err)
+	}
+	if hello.ProtocolVersion != ProtocolVersion {
+		t.Errorf("protocol_version = %d, want %d", hello.ProtocolVersion, ProtocolVersion)
+	}
+
+	// Second message is the state snapshot.
+	st := readState(t, conn)
+	if st.Status != "Idle" {
+		t.Errorf("status = %q, want Idle", st.Status)
+	}
+}
+
+func TestRemoveStaleSocketCleansUp(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "avella-stale-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	sockPath := filepath.Join(dir, "test.sock")
+
+	// Create a stale socket file (no listener).
+	if err := os.WriteFile(sockPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should succeed — stale file removed.
+	if err := removeStaleSocket(sockPath); err != nil {
+		t.Fatalf("removeStaleSocket failed: %v", err)
+	}
+	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
+		t.Error("stale socket file should have been removed")
+	}
+}
+
+func TestRemoveStaleSocketDetectsActiveDaemon(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "avella-active-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	sockPath := filepath.Join(dir, "test.sock")
+
+	// Start a listener to simulate a running daemon.
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// Should return errDaemonRunning.
+	err = removeStaleSocket(sockPath)
+	if err == nil {
+		t.Fatal("expected error for active socket")
+	}
+	if !errors.Is(err, errDaemonRunning) {
+		t.Errorf("expected errDaemonRunning, got: %v", err)
+	}
+}
+
+func TestRemoveStaleSocketNonexistent(t *testing.T) {
+	// Should succeed when the socket file doesn't exist.
+	err := removeStaleSocket("/tmp/nonexistent-avella-test.sock")
+	if err != nil {
+		t.Fatalf("removeStaleSocket failed on nonexistent: %v", err)
+	}
+}
+
+func TestDuplicateDaemonBlockedByActiveSocket(t *testing.T) {
+	// Start first server — this creates an active listener.
+	_, sockPath, cancel1 := startTestServer(t)
+	defer cancel1()
+
+	// Attempting to remove the "stale" socket should detect the active daemon.
+	err := removeStaleSocket(sockPath)
+	if err == nil {
+		t.Fatal("expected error for active socket")
+	}
+	if !errors.Is(err, errDaemonRunning) {
+		t.Errorf("expected errDaemonRunning, got: %v", err)
 	}
 }

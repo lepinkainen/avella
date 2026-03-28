@@ -67,9 +67,11 @@ tasks:
       - cp .build/release/AvellaTray ../{{.BUILD_DIR}}/AvellaTray.app/Contents/MacOS/
       - cp Info.plist ../{{.BUILD_DIR}}/AvellaTray.app/Contents/
       - cp Sources/AvellaTrayLib/Resources/icon.png ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources/
+      - cp Sources/AvellaTrayLib/Resources/AppIcon.icns ../{{.BUILD_DIR}}/AvellaTray.app/Contents/Resources/
       - codesign --sign - --force ../{{.BUILD_DIR}}/AvellaTray.app
     sources:
       - tray/Sources/**/*.swift
+      - tray/Sources/AvellaTrayLib/Resources/AppIcon.icns
       - tray/Package.swift
       - tray/Info.plist
     generates:

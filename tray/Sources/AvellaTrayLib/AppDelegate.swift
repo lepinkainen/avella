@@ -1,14 +1,17 @@
 import AppKit
+import SwiftUI
 
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var menuManager: MenuManager!
+    private var popover: NSPopover!
+    private var viewModel: TrayViewModel!
     private var socketClient: SocketClient!
     private let notificationManager = NotificationManager.shared
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         notificationManager.setup()
 
+        // Create status bar item first, before changing activation policy.
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem.button {
@@ -19,44 +22,56 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 button.title = "A"
             }
             button.toolTip = "Avella — file automation daemon"
+            button.action = #selector(togglePopover(_:))
+            button.target = self
         }
 
-        menuManager = MenuManager(statusItem: statusItem)
+        // Hide from Dock — must be after status item creation.
+        NSApp.setActivationPolicy(.accessory)
+
+        viewModel = TrayViewModel()
+
+        popover = NSPopover()
+        popover.contentSize = NSSize(width: 320, height: 480)
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(
+            rootView: PopoverContentView(viewModel: viewModel)
+        )
+
         socketClient = SocketClient()
 
         socketClient.onStateUpdate = { [weak self] state in
-            self?.menuManager.update(state: state)
+            self?.viewModel.update(state: state)
             self?.notificationManager.handleStateUpdate(recentFiles: state.recentFiles)
         }
 
         socketClient.onConnectionChange = { [weak self] connected in
             if !connected {
-                self?.menuManager.setDisconnected()
+                self?.viewModel.setDisconnected()
             }
         }
 
         socketClient.onProtocolMismatch = { [weak self] version in
-            self?.menuManager.setProtocolMismatch(
+            self?.viewModel.setProtocolMismatch(
                 daemon: version, tray: supportedProtocolVersion
             )
         }
 
-        menuManager.onToggleDryRun = { [weak self] in
+        viewModel.onToggleDryRun = { [weak self] in
             self?.socketClient.send(command: "toggle_dry_run")
         }
 
-        menuManager.onToggleNotifications = {
+        viewModel.onToggleNotifications = {
             let mgr = NotificationManager.shared
             mgr.setEnabled(!mgr.isEnabled)
         }
 
-        menuManager.onOpenConfig = { [weak self] in
+        viewModel.onOpenConfig = { [weak self] in
             self?.socketClient.send(command: "open_config")
         }
 
-        menuManager.onQuit = { [weak self] in
+        viewModel.onQuit = { [weak self] in
             self?.socketClient.send(command: "quit")
-            // Give the command a moment to be sent before exiting.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NSApplication.shared.terminate(nil)
             }
@@ -67,6 +82,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillTerminate(_ notification: Notification) {
         socketClient.stop()
+    }
+
+    @objc private func togglePopover(_ sender: AnyObject?) {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
     }
 
     private func loadIcon() -> NSImage? {

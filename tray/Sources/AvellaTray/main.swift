@@ -1,9 +1,13 @@
-import AppKit
+import SwiftUI
 import AvellaTrayLib
 
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
+@main
+struct AvellaTrayApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+    var body: some Scene {
+        Settings {
+            EmptyView()
+        }
+    }
+}

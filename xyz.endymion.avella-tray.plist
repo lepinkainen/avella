@@ -11,7 +11,8 @@
     launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
     rm ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
 
-  Customize the ProgramArguments path to match your avella-tray binary location.
+  Launches via `open -W` so LaunchServices associates the process with the
+  .app bundle (required for notification icons and proper app identity).
 -->
 <plist version="1.0">
 <dict>
@@ -20,7 +21,9 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/AvellaTray.app/Contents/MacOS/AvellaTray</string>
+        <string>/usr/bin/open</string>
+        <string>-W</string>
+        <string>/Applications/AvellaTray.app</string>
     </array>
 
     <key>RunAtLoad</key>

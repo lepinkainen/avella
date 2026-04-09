@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/fsnotify/fsnotify"
 	"github.com/lepinkainen/avella/config"
 	"github.com/lepinkainen/avella/internal/pathutil"
 	"github.com/lepinkainen/avella/rules"
@@ -31,6 +35,72 @@ type CLI struct {
 	DryRun  bool   `help:"Log actions without executing them." name:"dry-run"`
 	Once    bool   `help:"Process existing files in watch directories once and exit."`
 	Version bool   `help:"Print version and exit."`
+}
+
+type runtimeState struct {
+	mu       sync.RWMutex
+	engine   *rules.Engine
+	dryRun   bool
+	sshPools []*ssh.Pool
+}
+
+func newRuntimeState(engine *rules.Engine, dryRun bool, pool *ssh.Pool) *runtimeState {
+	st := &runtimeState{engine: engine, dryRun: dryRun}
+	if pool != nil {
+		st.sshPools = append(st.sshPools, pool)
+	}
+	return st
+}
+
+func (s *runtimeState) Process(ctx context.Context, path string) (rules.ProcessResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.engine.Process(ctx, path)
+}
+
+func (s *runtimeState) ShouldIgnore(path string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.engine.ShouldIgnore(path)
+}
+
+func (s *runtimeState) SetDryRun(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dryRun = enabled
+	s.engine.SetDryRun(enabled)
+}
+
+func (s *runtimeState) DryRun() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dryRun
+}
+
+func (s *runtimeState) SwapEngine(engine *rules.Engine, pool *ssh.Pool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.engine = engine
+	if pool != nil {
+		s.sshPools = append(s.sshPools, pool)
+	}
+}
+
+func (s *runtimeState) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var firstErr error
+	for _, pool := range s.sshPools {
+		if pool == nil {
+			continue
+		}
+		if err := pool.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	s.sshPools = nil
+	return firstErr
 }
 
 func main() {
@@ -55,6 +125,9 @@ func main() {
 	if cfgPath == "" {
 		cfgPath = config.DefaultConfigPath()
 	}
+	if expandedCfgPath, err := pathutil.ExpandHome(cfgPath); err == nil {
+		cfgPath = expandedCfgPath
+	}
 
 	slog.Info("loading config", "path", cfgPath)
 
@@ -70,21 +143,20 @@ func main() {
 		"ssh_hosts", len(cfg.SSHHosts),
 	)
 
-	var sshPool *ssh.Pool
-	if len(cfg.SSHHosts) > 0 {
-		sshPool = ssh.NewPool(cfg.SSHHosts)
-		defer func() {
-			if closeErr := sshPool.Close(); closeErr != nil {
-				slog.Error("failed to close SSH pool", "error", closeErr)
-			}
-		}()
-	}
+	sshPool := newSSH(cfg)
+	runtime := newRuntimeState(nil, cli.DryRun, sshPool)
+	defer func() {
+		if closeErr := runtime.Close(); closeErr != nil {
+			slog.Error("failed to close SSH pool", "error", closeErr)
+		}
+	}()
 
 	engine, err := rules.NewEngine(cfg.Rules, cfg.Ignored, sshPool, cli.DryRun)
 	if err != nil {
 		slog.Error("failed to create rule engine", "error", err)
 		os.Exit(1)
 	}
+	runtime.SwapEngine(engine, nil)
 
 	if cli.DryRun {
 		slog.Info("dry-run mode enabled, no actions will be executed")
@@ -94,29 +166,33 @@ func main() {
 	defer stop()
 
 	if cli.Once {
-		runOnce(ctx, cfg, engine)
+		runOnce(ctx, cfg.Watch, runtime)
 		return
 	}
 
 	u := ui.New()
 	u.SetVersion(Version)
 	u.SetRules(ruleInfoFromConfig(cfg.Rules))
-	if expandedCfgPath, err := pathutil.ExpandHome(cfgPath); err == nil {
-		cfgPath = expandedCfgPath
-	}
 	u.SetConfigPath(cfgPath)
 	u.SetDryRunToggle(cli.DryRun, func(enabled bool) {
-		engine.SetDryRun(enabled)
+		runtime.SetDryRun(enabled)
 	})
 	u.Run(ctx, stop, func(ctx context.Context) {
-		runDaemon(ctx, cfg, engine, u)
+		runDaemon(ctx, cfgPath, cfg.Watch, runtime, u)
 	})
 
 	slog.Info("shutting down")
 }
 
-func processExistingFiles(ctx context.Context, cfg *config.Config, engine *rules.Engine, u ui.UI) {
-	for _, dir := range cfg.Watch {
+func newSSH(cfg *config.Config) *ssh.Pool {
+	if len(cfg.SSHHosts) == 0 {
+		return nil
+	}
+	return ssh.NewPool(cfg.SSHHosts)
+}
+
+func processExistingFiles(ctx context.Context, watchDirs []string, runtime *runtimeState, u ui.UI) {
+	for _, dir := range watchDirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			slog.Error("failed to read watch directory", "dir", dir, "error", err)
@@ -131,11 +207,11 @@ func processExistingFiles(ctx context.Context, cfg *config.Config, engine *rules
 				slog.Debug("skipping temporary file", "path", path)
 				continue
 			}
-			if engine.ShouldIgnore(path) {
+			if runtime.ShouldIgnore(path) {
 				slog.Debug("ignoring file (config)", "path", path)
 				continue
 			}
-			result, err := engine.Process(ctx, path)
+			result, err := runtime.Process(ctx, path)
 			if err != nil {
 				slog.Error("failed to process file", "path", path, "error", err)
 			}
@@ -146,14 +222,14 @@ func processExistingFiles(ctx context.Context, cfg *config.Config, engine *rules
 	}
 }
 
-func runOnce(ctx context.Context, cfg *config.Config, engine *rules.Engine) {
+func runOnce(ctx context.Context, watchDirs []string, runtime *runtimeState) {
 	slog.Info("running once, processing existing files")
-	processExistingFiles(ctx, cfg, engine, nil)
+	processExistingFiles(ctx, watchDirs, runtime, nil)
 	slog.Info("done")
 }
 
-func runDaemon(ctx context.Context, cfg *config.Config, engine *rules.Engine, u ui.UI) {
-	w, err := watcher.New(cfg.Watch)
+func runDaemon(ctx context.Context, cfgPath string, watchDirs []string, runtime *runtimeState, u ui.UI) {
+	w, err := watcher.New(watchDirs)
 	if err != nil {
 		slog.Error("failed to create watcher", "error", err)
 		return
@@ -164,16 +240,18 @@ func runDaemon(ctx context.Context, cfg *config.Config, engine *rules.Engine, u 
 		}
 	}()
 
-	w.IgnoreFunc = engine.ShouldIgnore
+	w.IgnoreFunc = runtime.ShouldIgnore
 	files := w.Start(ctx)
 
+	startConfigReloader(ctx, cfgPath, watchDirs, runtime, u)
+
 	slog.Info("processing existing files in watch directories")
-	processExistingFiles(ctx, cfg, engine, u)
+	processExistingFiles(ctx, watchDirs, runtime, u)
 
 	slog.Info("avella running, press Ctrl+C to stop")
 	for path := range files {
 		u.SetStatus("Processing " + path)
-		result, err := engine.Process(ctx, path)
+		result, err := runtime.Process(ctx, path)
 		if err != nil {
 			slog.Error("failed to process file", "path", path, "error", err)
 		}
@@ -182,6 +260,129 @@ func runDaemon(ctx context.Context, cfg *config.Config, engine *rules.Engine, u 
 		}
 		u.IncProcessed()
 		u.SetStatus("Idle")
+	}
+}
+
+func startConfigReloader(ctx context.Context, cfgPath string, watchDirs []string, runtime *runtimeState, u ui.UI) {
+	watcherDir := filepath.Dir(cfgPath)
+	watcherBase := filepath.Base(cfgPath)
+
+	cfgWatcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		slog.Warn("failed to start config watcher", "path", cfgPath, "error", err)
+		return
+	}
+	if err := cfgWatcher.Add(watcherDir); err != nil {
+		_ = cfgWatcher.Close()
+		slog.Warn("failed to watch config directory", "dir", watcherDir, "error", err)
+		return
+	}
+
+	slog.Info("watching config for changes", "path", cfgPath)
+
+	go func() {
+		defer func() {
+			if closeErr := cfgWatcher.Close(); closeErr != nil {
+				slog.Warn("failed to close config watcher", "error", closeErr)
+			}
+		}()
+
+		var reloadTimer *time.Timer
+		var reloadCh <-chan time.Time
+
+		scheduleReload := func() {
+			if reloadTimer == nil {
+				reloadTimer = time.NewTimer(300 * time.Millisecond)
+				reloadCh = reloadTimer.C
+				return
+			}
+			if !reloadTimer.Stop() {
+				select {
+				case <-reloadTimer.C:
+				default:
+				}
+			}
+			reloadTimer.Reset(300 * time.Millisecond)
+		}
+		defer func() {
+			if reloadTimer != nil {
+				reloadTimer.Stop()
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-cfgWatcher.Events:
+				if !ok {
+					return
+				}
+				if filepath.Base(event.Name) != watcherBase {
+					continue
+				}
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Chmod) == 0 {
+					continue
+				}
+				slog.Debug("config file changed", "path", event.Name, "op", event.Op.String())
+				scheduleReload()
+			case err, ok := <-cfgWatcher.Errors:
+				if !ok {
+					return
+				}
+				slog.Warn("config watcher error", "error", err)
+			case <-reloadCh:
+				reloadCh = nil
+				reloadConfig(cfgPath, watchDirs, runtime, u)
+			}
+		}
+	}()
+}
+
+func reloadConfig(cfgPath string, watchDirs []string, runtime *runtimeState, u ui.UI) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		slog.Error("config reload failed", "path", cfgPath, "error", err)
+		notifyReload(fmt.Sprintf("Config reload failed: %v", err))
+		return
+	}
+
+	watchChanged := !reflect.DeepEqual(cfg.Watch, watchDirs)
+	if watchChanged {
+		slog.Warn("config watch directories changed; restart required to apply", "configured", cfg.Watch, "active", watchDirs)
+	}
+
+	sshPool := newSSH(cfg)
+	engine, err := rules.NewEngine(cfg.Rules, cfg.Ignored, sshPool, runtime.DryRun())
+	if err != nil {
+		if sshPool != nil {
+			if closeErr := sshPool.Close(); closeErr != nil {
+				slog.Warn("failed to close reloaded SSH pool", "error", closeErr)
+			}
+		}
+		slog.Error("config reload failed", "path", cfgPath, "error", err)
+		notifyReload(fmt.Sprintf("Config reload failed: %v", err))
+		return
+	}
+
+	runtime.SwapEngine(engine, sshPool)
+	u.SetRules(ruleInfoFromConfig(cfg.Rules))
+
+	msg := fmt.Sprintf("Config reloaded (%d rules)", len(cfg.Rules))
+	if watchChanged {
+		msg += "; restart required for watch dir changes"
+	}
+	slog.Info("config reloaded", "path", cfgPath, "rules", len(cfg.Rules), "ssh_hosts", len(cfg.SSHHosts), "watch_dirs_changed", watchChanged)
+	notifyReload(msg)
+}
+
+func notifyReload(msg string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	script := fmt.Sprintf(`display notification %q with title "Avella"`, msg)
+	if err := exec.CommandContext(ctx, "osascript", "-e", script).Run(); err != nil {
+		slog.Warn("reload notification failed", "error", err)
 	}
 }
 

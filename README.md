@@ -6,13 +6,14 @@ Think of it as a minimal, YAML-configured alternative to [Hazel](https://www.noo
 
 ## What it does
 
-Avella watches directories (e.g. `~/Downloads`) and processes new files through a rule pipeline:
+Avella watches directories (e.g. `~/Downloads`) and processes files through a rule pipeline:
 
 1. **Detect** — picks up new files via fsnotify
-2. **Stabilize** — waits for the file to finish writing (handles partial downloads, slow copies)
+2. **Stabilize** — waits for newly-created files to finish writing (handles partial downloads, slow copies)
 3. **Match** — evaluates rules top-down, first match wins
 4. **Act** — runs actions: move, exec, SCP upload, ZIP validation, macOS notifications
-5. **Hooks** — runs `on_success` / `on_fail` actions after the primary actions complete
+5. **Sweep** — scans existing files on startup and every 15 minutes so `min_age` rules can match later
+6. **Hooks** — runs `on_success` / `on_fail` actions after the primary actions complete
 
 ## Example config
 
@@ -43,7 +44,7 @@ rules:
 | `filename_glob` | Glob pattern against the filename |
 | `file_type` | Category: `Video`, `Image`, `Audio`, `Document`, `Archive`, `Other` |
 | `min_size` / `max_size` | File size in bytes |
-| `min_age` | Go duration (e.g. `1h`, `30m`) since last modification |
+| `min_age` | Go duration (e.g. `1h`, `30m`) since last modification; existing files are rescanned on startup and every 15 minutes |
 
 ### Actions
 

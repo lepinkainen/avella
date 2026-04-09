@@ -82,8 +82,9 @@ rules:
       - notify:
           message: "{{.Filename}} is a corrupt ZIP file"
 
-  # Sort PDFs but only if they've been around for at least an hour
-  # (gives you time to handle freshly-downloaded files manually)
+  # Sort PDFs but only if they've been around for at least an hour.
+  # Avella rescans existing files on startup and every 15 minutes,
+  # so this will run later even if the file was too new when first seen.
   - name: sort_pdfs
     match:
       filename_regex: ".*\\.pdf$"

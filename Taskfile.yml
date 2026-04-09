@@ -81,7 +81,7 @@ tasks:
     desc: Build Go project
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -v -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} main.go
+      - go build -v -ldflags="-X main.Version={{.VERSION}}" -o {{.BUILD_DIR}}/{{.PROJECT_NAME}} .
     sources:
       - ./**/*.go
     generates:
@@ -137,4 +137,4 @@ tasks:
   dev:
     desc: Run in development mode
     cmds:
-      - go run main.go --config config.yaml
+      - go run . --config config.yaml

@@ -42,10 +42,11 @@ type runtimeState struct {
 	engine   *rules.Engine
 	dryRun   bool
 	sshPools []*ssh.Pool
+	tracker  *processTracker
 }
 
 func newRuntimeState(engine *rules.Engine, dryRun bool, pool *ssh.Pool) *runtimeState {
-	st := &runtimeState{engine: engine, dryRun: dryRun}
+	st := &runtimeState{engine: engine, dryRun: dryRun, tracker: newProcessTracker()}
 	if pool != nil {
 		st.sshPools = append(st.sshPools, pool)
 	}
@@ -203,21 +204,41 @@ func processExistingFiles(ctx context.Context, watchDirs []string, runtime *runt
 				continue
 			}
 			path := filepath.Join(dir, entry.Name())
-			if stabilizer.ShouldSkip(path) {
-				slog.Debug("skipping temporary file", "path", path)
-				continue
-			}
-			if runtime.ShouldIgnore(path) {
-				slog.Debug("ignoring file (config)", "path", path)
-				continue
-			}
-			result, err := runtime.Process(ctx, path)
-			if err != nil {
-				slog.Error("failed to process file", "path", path, "error", err)
-			}
-			if u != nil && result.Matched {
-				addRecentFromResult(u, path, result)
-			}
+			handlePath(ctx, path, runtime, u)
+		}
+	}
+}
+
+func handlePath(ctx context.Context, path string, runtime *runtimeState, u ui.UI) {
+	if stabilizer.ShouldSkip(path) {
+		slog.Debug("skipping temporary file", "path", path)
+		return
+	}
+	if runtime.ShouldIgnore(path) {
+		slog.Debug("ignoring file (config)", "path", path)
+		return
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		slog.Debug("skipping missing file", "path", path, "error", err)
+		return
+	}
+
+	if !runtime.tracker.ShouldProcess(path, info, runtime.DryRun()) {
+		slog.Debug("skipping already-processed file", "path", path)
+		return
+	}
+
+	result, err := runtime.Process(ctx, path)
+	if err != nil {
+		slog.Error("failed to process file", "path", path, "error", err)
+		return
+	}
+	if result.Matched {
+		runtime.tracker.MarkProcessed(path, info, result.DryRun)
+		if u != nil {
+			addRecentFromResult(u, path, result)
 		}
 	}
 }
@@ -248,18 +269,29 @@ func runDaemon(ctx context.Context, cfgPath string, watchDirs []string, runtime 
 	slog.Info("processing existing files in watch directories")
 	processExistingFiles(ctx, watchDirs, runtime, u)
 
-	slog.Info("avella running, press Ctrl+C to stop")
-	for path := range files {
-		u.SetStatus("Processing " + path)
-		result, err := runtime.Process(ctx, path)
-		if err != nil {
-			slog.Error("failed to process file", "path", path, "error", err)
+	ticker := time.NewTicker(SweepInterval)
+	defer ticker.Stop()
+
+	slog.Info("avella running, press Ctrl+C to stop", "sweep_interval", SweepInterval)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			u.SetStatus("Sweeping watch directories")
+			slog.Info("running periodic sweep", "interval", SweepInterval)
+			runtime.tracker.Prune()
+			processExistingFiles(ctx, watchDirs, runtime, u)
+			u.SetStatus("Idle")
+		case path, ok := <-files:
+			if !ok {
+				return
+			}
+			u.SetStatus("Processing " + path)
+			handlePath(ctx, path, runtime, u)
+			u.IncProcessed()
+			u.SetStatus("Idle")
 		}
-		if result.Matched {
-			addRecentFromResult(u, path, result)
-		}
-		u.IncProcessed()
-		u.SetStatus("Idle")
 	}
 }
 
@@ -366,6 +398,7 @@ func reloadConfig(cfgPath string, watchDirs []string, runtime *runtimeState, u u
 	}
 
 	runtime.SwapEngine(engine, sshPool)
+	runtime.tracker.Reset()
 	u.SetRules(ruleInfoFromConfig(cfg.Rules))
 
 	msg := fmt.Sprintf("Config reloaded (%d rules)", len(cfg.Rules))

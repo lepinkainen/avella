@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import AvellaTrayLib
 
+@MainActor
 final class NotificationManagerTests: XCTestCase {
 
     private func makeFile(
@@ -20,7 +21,7 @@ final class NotificationManagerTests: XCTestCase {
             "time": "\(time)"
         }
         """
-        return try! JSONDecoder().decode(RecentFile.self, from: Data(json.utf8))
+        return try! JSONDecoder.avella().decode(RecentFile.self, from: Data(json.utf8))
     }
 
     // MARK: - countNewFiles
@@ -69,6 +70,16 @@ final class NotificationManagerTests: XCTestCase {
         let old = [makeFile("a.txt", rule: "ruleA", time: "T1")]
         let current = [makeFile("a.txt", rule: "ruleB", time: "T1")]
         XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 1)
+    }
+
+    func testCountNewFilesIgnoresDryRunFlip() {
+        let mgr = NotificationManager()
+        // Daemon re-emits the head entry with dryRun flipped (dry-run toggle
+        // then real execution) while filename/time/rule stay the same — this
+        // must NOT be treated as a new file.
+        let old = [makeFile("a.txt", dryRun: true, time: "T1")]
+        let current = [makeFile("a.txt", dryRun: false, time: "T1")]
+        XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 0)
     }
 
     // MARK: - handleStateUpdate first-update skip

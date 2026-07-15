@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import AvellaTrayLib
 
+@MainActor
 final class TrayViewModelTests: XCTestCase {
 
     private func makeState(
@@ -38,7 +39,7 @@ final class TrayViewModelTests: XCTestCase {
             "recent_files": \(recentJSON)
         }
         """
-        return try! JSONDecoder().decode(AppState.self, from: Data(json.utf8))
+        return try! JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8))
     }
 
     // MARK: - Initial state
@@ -137,30 +138,40 @@ final class TrayViewModelTests: XCTestCase {
         XCTAssertFalse(vm.isConnected)
     }
 
-    // MARK: - Callbacks
+    // MARK: - Actions
 
-    func testCallbacksAreFired() {
+    func testActionsAreFired() {
         let vm = TrayViewModel()
 
-        var dryRunCalled = false
-        var notifCalled = false
-        var configCalled = false
-        var quitCalled = false
+        var firedActions: [TrayAction] = []
+        vm.onAction = { action in firedActions.append(action) }
 
-        vm.onToggleDryRun = { dryRunCalled = true }
-        vm.onToggleNotifications = { notifCalled = true }
-        vm.onOpenConfig = { configCalled = true }
-        vm.onQuit = { quitCalled = true }
+        vm.perform(.toggleDryRun)
+        vm.perform(.toggleNotifications)
+        vm.perform(.openConfig)
+        vm.perform(.quit)
 
-        vm.onToggleDryRun?()
-        vm.onToggleNotifications?()
-        vm.onOpenConfig?()
-        vm.onQuit?()
+        XCTAssertEqual(firedActions.count, 4)
+        guard case .toggleDryRun = firedActions[0] else { return XCTFail("expected toggleDryRun") }
+        guard case .toggleNotifications = firedActions[1] else { return XCTFail("expected toggleNotifications") }
+        guard case .openConfig = firedActions[2] else { return XCTFail("expected openConfig") }
+        guard case .quit = firedActions[3] else { return XCTFail("expected quit") }
+    }
 
-        XCTAssertTrue(dryRunCalled)
-        XCTAssertTrue(notifCalled)
-        XCTAssertTrue(configCalled)
-        XCTAssertTrue(quitCalled)
+    // MARK: - Notifications toggle
+
+    func testNotificationsEnabledReflectsManagerWithoutManualSync() {
+        let mgr = NotificationManager.shared
+        let original = mgr.isEnabled
+        defer { mgr.setEnabled(original) }
+
+        let vm = TrayViewModel()
+
+        mgr.setEnabled(true)
+        XCTAssertTrue(vm.notificationsEnabled)
+
+        mgr.setEnabled(false)
+        XCTAssertFalse(vm.notificationsEnabled)
     }
 
     // MARK: - ConnectionState

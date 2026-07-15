@@ -1,11 +1,21 @@
 import Foundation
+import Observation
 import UserNotifications
 
 /// Posts native macOS notifications when new files are processed.
+///
+/// `@Observable` so SwiftUI views can read `isEnabled` (directly or through
+/// `TrayViewModel`) without a manually synced mirror property.
+@MainActor
+@Observable
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
-    private var notificationsEnabled: Bool
+    private(set) var notificationsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(notificationsEnabled, forKey: "notificationsEnabled")
+        }
+    }
     var lastSeenFiles: [RecentFile] = []
     var firstUpdate = true
     var setupDone = false
@@ -22,8 +32,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         guard !setupDone else { return }
         setupDone = true
         UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, error in
-            if let error = error {
+        Task {
+            do {
+                _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            } catch {
                 print("Notification auth error: \(error)")
             }
         }
@@ -31,7 +43,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func setEnabled(_ enabled: Bool) {
         notificationsEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "notificationsEnabled")
     }
 
     func handleStateUpdate(recentFiles: [RecentFile]) {
@@ -59,7 +70,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - UNUserNotificationCenterDelegate
 
     /// Show notifications even when the app is in the foreground.
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
@@ -71,15 +82,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func countNewFiles(current: [RecentFile], previous: [RecentFile]) -> Int {
         guard let firstOld = previous.first else { return current.count }
-        for (i, file) in current.enumerated() {
-            if file.filename == firstOld.filename
-                && file.time == firstOld.time
-                && file.rule == firstOld.rule
-            {
-                return i
-            }
-        }
-        return current.count
+        // Match on filename+time+rule only: the daemon legitimately re-emits
+        // the head entry with a flipped dryRun (dry-run toggle then real
+        // execution) or a changed action while these three fields stay the
+        // same — that must not be treated as a new file.
+        return current.firstIndex {
+            $0.filename == firstOld.filename && $0.time == firstOld.time && $0.rule == firstOld.rule
+        } ?? current.count
     }
 
     private func postNotification(for file: RecentFile) {

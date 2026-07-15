@@ -1,56 +1,81 @@
 import Foundation
+import Observation
 
-/// Observable view model that bridges the imperative socket callbacks to SwiftUI's reactive model.
-final class TrayViewModel: ObservableObject {
+/// Actions a user can trigger from the tray UI. Wired up by AppDelegate.
+enum TrayAction {
+    case toggleDryRun
+    case toggleNotifications
+    case openConfig
+    case quit
+}
+
+/// Observable view model that bridges socket events to SwiftUI's reactive model.
+@MainActor
+@Observable
+final class TrayViewModel {
     enum ConnectionState {
         case disconnected
         case connected
         case protocolMismatch(daemon: Int, tray: Int)
     }
 
-    @Published var connectionState: ConnectionState = .disconnected
-    @Published var status: String = "Disconnected"
-    @Published var processed: Int = 0
-    @Published var dryRun: Bool = false
-    @Published var notificationsEnabled: Bool = NotificationManager.shared.isEnabled
-    @Published var recentFiles: [RecentFile] = []
-    @Published var rules: [RuleInfo] = []
-    @Published var version: String = ""
+    var connectionState: ConnectionState = .disconnected
+    var processed: Int = 0
+    var dryRun: Bool = false
+    var recentFiles: [RecentFile] = []
+    var rules: [RuleInfo] = []
+    var version: String = ""
+
+    /// Single source of truth is the @Observable NotificationManager;
+    /// observation tracking flows through this computed access.
+    var notificationsEnabled: Bool { NotificationManager.shared.isEnabled }
+
+    /// Raw status string reported by the daemon while connected.
+    private var daemonStatus: String = "Disconnected"
+
+    var status: String {
+        switch connectionState {
+        case .disconnected:
+            return "Disconnected"
+        case .connected:
+            return daemonStatus
+        case .protocolMismatch(let daemon, let tray):
+            return "Protocol mismatch (daemon v\(daemon), tray v\(tray))"
+        }
+    }
 
     var isConnected: Bool {
         if case .connected = connectionState { return true }
         return false
     }
 
-    // Action callbacks — set by AppDelegate, invoked by SwiftUI views.
-    var onToggleDryRun: (() -> Void)?
-    var onToggleNotifications: (() -> Void)?
-    var onOpenConfig: (() -> Void)?
-    var onQuit: (() -> Void)?
+    /// Set by AppDelegate, invoked by SwiftUI views via `perform(_:)`.
+    var onAction: ((TrayAction) -> Void)?
+
+    func perform(_ action: TrayAction) {
+        onAction?(action)
+    }
 
     func update(state: AppState) {
         connectionState = .connected
-        status = state.status
+        daemonStatus = state.status
         processed = state.processed
         dryRun = state.dryRun
         recentFiles = state.recentFiles
         rules = state.rules
         version = state.version
-        notificationsEnabled = NotificationManager.shared.isEnabled
     }
 
     func setDisconnected() {
         connectionState = .disconnected
-        status = "Disconnected"
+        daemonStatus = "Disconnected"
         processed = 0
         dryRun = false
         recentFiles = []
         rules = []
-        notificationsEnabled = NotificationManager.shared.isEnabled
     }
 
     func setProtocolMismatch(daemon: Int, tray: Int) {
         connectionState = .protocolMismatch(daemon: daemon, tray: tray)
-        status = "Protocol mismatch (daemon v\(daemon), tray v\(tray))"
     }
 }

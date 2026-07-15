@@ -29,7 +29,7 @@ final class StateTests: XCTestCase {
             ]
         }
         """
-        let state = try JSONDecoder().decode(AppState.self, from: Data(json.utf8))
+        let state = try JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8))
 
         XCTAssertEqual(state.status, "watching")
         XCTAssertEqual(state.processed, 42)
@@ -56,7 +56,7 @@ final class StateTests: XCTestCase {
             "version": "dev"
         }
         """
-        let state = try JSONDecoder().decode(AppState.self, from: Data(json.utf8))
+        let state = try JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8))
 
         XCTAssertEqual(state.status, "idle")
         XCTAssertEqual(state.processed, 0)
@@ -76,13 +76,13 @@ final class StateTests: XCTestCase {
             "recent_files": []
         }
         """
-        let state = try JSONDecoder().decode(AppState.self, from: Data(json.utf8))
+        let state = try JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8))
         XCTAssertEqual(state.recentFiles, [])
     }
 
     func testDecodeStateInvalidJSONThrows() {
         let json = "{ not valid json }"
-        XCTAssertThrowsError(try JSONDecoder().decode(AppState.self, from: Data(json.utf8)))
+        XCTAssertThrowsError(try JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8)))
     }
 
     func testDecodeStateMissingRequiredFieldThrows() {
@@ -96,7 +96,7 @@ final class StateTests: XCTestCase {
         }
         """
         // config_path is missing
-        XCTAssertThrowsError(try JSONDecoder().decode(AppState.self, from: Data(json.utf8)))
+        XCTAssertThrowsError(try JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8)))
     }
 
     // MARK: - RecentFile decoding
@@ -111,7 +111,7 @@ final class StateTests: XCTestCase {
             "time": "2026-03-27T12:30:00Z"
         }
         """
-        let file = try JSONDecoder().decode(RecentFile.self, from: Data(json.utf8))
+        let file = try JSONDecoder.avella().decode(RecentFile.self, from: Data(json.utf8))
 
         XCTAssertEqual(file.filename, "report.pdf")
         XCTAssertEqual(file.rule, "documents")
@@ -120,16 +120,31 @@ final class StateTests: XCTestCase {
         XCTAssertEqual(file.time, "2026-03-27T12:30:00Z")
     }
 
+    func testRecentFileNoLongerIdentifiable() throws {
+        // RecentFile intentionally has no derived id: filename+time+rule can
+        // collide (daemon timestamps are 1s granularity), so views must use
+        // positional identity instead. This test just documents equality
+        // still works for otherwise-identical entries.
+        let a = try JSONDecoder.avella().decode(RecentFile.self, from: Data("""
+        {"filename": "a.txt", "rule": "r", "action": "act", "dry_run": false, "time": "T1"}
+        """.utf8))
+        let b = try JSONDecoder.avella().decode(RecentFile.self, from: Data("""
+        {"filename": "a.txt", "rule": "r", "action": "act", "dry_run": false, "time": "T1"}
+        """.utf8))
+        XCTAssertEqual(a, b)
+    }
+
     // MARK: - RuleInfo decoding
 
     func testDecodeRuleInfo() throws {
         let json = """
         {"name": "downloads", "action_type": "exec"}
         """
-        let rule = try JSONDecoder().decode(RuleInfo.self, from: Data(json.utf8))
+        let rule = try JSONDecoder.avella().decode(RuleInfo.self, from: Data(json.utf8))
 
         XCTAssertEqual(rule.name, "downloads")
         XCTAssertEqual(rule.actionType, "exec")
+        XCTAssertEqual(rule.id, "downloads")
     }
 
     // MARK: - ServerMessage decoding
@@ -148,21 +163,50 @@ final class StateTests: XCTestCase {
             }
         }
         """
-        let msg = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8))
+        let msg = try JSONDecoder.avella().decode(ServerMessage.self, from: Data(json.utf8))
 
-        XCTAssertEqual(msg.type, "state")
-        XCTAssertNotNil(msg.data)
-        XCTAssertEqual(msg.data?.status, "watching")
+        guard case .state(let state) = msg else {
+            return XCTFail("expected .state")
+        }
+        XCTAssertEqual(state.status, "watching")
     }
 
-    func testDecodeServerMessageWithoutData() throws {
+    func testDecodeServerMessageUnknownType() throws {
         let json = """
         {"type": "ping"}
         """
-        let msg = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8))
+        let msg = try JSONDecoder.avella().decode(ServerMessage.self, from: Data(json.utf8))
 
-        XCTAssertEqual(msg.type, "ping")
-        XCTAssertNil(msg.data)
+        guard case .unknown(let type) = msg else {
+            return XCTFail("expected .unknown")
+        }
+        XCTAssertEqual(type, "ping")
+    }
+
+    func testDecodeServerMessageHello() throws {
+        let json = """
+        {"type": "hello", "data": {"protocol_version": 1}}
+        """
+        let msg = try JSONDecoder.avella().decode(ServerMessage.self, from: Data(json.utf8))
+
+        guard case .hello(let hello) = msg else {
+            return XCTFail("expected .hello")
+        }
+        XCTAssertEqual(hello.protocolVersion, 1)
+    }
+
+    func testDecodeServerMessageHelloMissingDataThrows() {
+        let json = """
+        {"type": "hello"}
+        """
+        XCTAssertThrowsError(try JSONDecoder.avella().decode(ServerMessage.self, from: Data(json.utf8)))
+    }
+
+    func testDecodeServerMessageStateMalformedDataThrows() {
+        let json = """
+        {"type": "state", "data": {"status": "watching"}}
+        """
+        XCTAssertThrowsError(try JSONDecoder.avella().decode(ServerMessage.self, from: Data(json.utf8)))
     }
 
     // MARK: - HelloData decoding
@@ -171,50 +215,8 @@ final class StateTests: XCTestCase {
         let json = """
         {"protocol_version": 1}
         """
-        let hello = try JSONDecoder().decode(HelloData.self, from: Data(json.utf8))
+        let hello = try JSONDecoder.avella().decode(HelloData.self, from: Data(json.utf8))
         XCTAssertEqual(hello.protocolVersion, 1)
-    }
-
-    // MARK: - RawServerMessage parsing
-
-    func testParseHelloMessage() {
-        let json = """
-        {"type": "hello", "data": {"protocol_version": 1}}
-        """
-        let result = RawServerMessage.parse(Data(json.utf8))
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.type, "hello")
-        XCTAssertNotNil(result?.data)
-
-        let hello = try? JSONDecoder().decode(HelloData.self, from: result!.data!)
-        XCTAssertEqual(hello?.protocolVersion, 1)
-    }
-
-    func testParseStateMessage() {
-        let json = """
-        {"type": "state", "data": {"status": "Idle", "processed": 0, "dry_run": false, "config_path": "/tmp/c.yaml", "rules": [], "version": "1.0.0"}}
-        """
-        let result = RawServerMessage.parse(Data(json.utf8))
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.type, "state")
-
-        let state = try? JSONDecoder().decode(AppState.self, from: result!.data!)
-        XCTAssertEqual(state?.status, "Idle")
-    }
-
-    func testParseMessageWithoutData() {
-        let json = """
-        {"type": "ping"}
-        """
-        let result = RawServerMessage.parse(Data(json.utf8))
-        XCTAssertNotNil(result)
-        XCTAssertEqual(result?.type, "ping")
-        XCTAssertNil(result?.data)
-    }
-
-    func testParseInvalidJSON() {
-        let result = RawServerMessage.parse(Data("not json".utf8))
-        XCTAssertNil(result)
     }
 
     func testSupportedProtocolVersion() {
@@ -224,22 +226,89 @@ final class StateTests: XCTestCase {
     // MARK: - ClientCommand encoding
 
     func testEncodeClientCommand() throws {
-        let cmd = ClientCommand(command: "toggle_dry_run")
+        let cmd = ClientCommand(.toggleDryRun)
         let data = try JSONEncoder().encode(cmd)
         let dict = try JSONDecoder().decode([String: String].self, from: data)
 
         XCTAssertEqual(dict["type"], "command")
         XCTAssertEqual(dict["command"], "toggle_dry_run")
     }
-}
 
-// Equatable conformance for test assertions.
-extension RecentFile: Equatable {
-    public static func == (lhs: RecentFile, rhs: RecentFile) -> Bool {
-        lhs.filename == rhs.filename
-            && lhs.rule == rhs.rule
-            && lhs.action == rhs.action
-            && lhs.dryRun == rhs.dryRun
-            && lhs.time == rhs.time
+    func testEncodeAllClientCommands() throws {
+        let expectations: [(DaemonCommand, String)] = [
+            (.toggleDryRun, "toggle_dry_run"),
+            (.openConfig, "open_config"),
+            (.quit, "quit"),
+        ]
+        for (command, expected) in expectations {
+            let cmd = ClientCommand(command)
+            let data = try JSONEncoder().encode(cmd)
+            let dict = try JSONDecoder().decode([String: String].self, from: data)
+            XCTAssertEqual(dict["command"], expected)
+            XCTAssertEqual(dict["type"], "command")
+        }
+    }
+
+    // MARK: - LineBuffer
+
+    func testLineBufferSingleCompleteLine() {
+        var buffer = LineBuffer()
+        let lines = buffer.append(Data("hello\n".utf8))
+        XCTAssertEqual(lines.map { String(decoding: $0, as: UTF8.self) }, ["hello"])
+    }
+
+    func testLineBufferPartialChunkAcrossTwoAppends() {
+        var buffer = LineBuffer()
+        let first = buffer.append(Data("hel".utf8))
+        XCTAssertEqual(first, [])
+
+        let second = buffer.append(Data("lo\n".utf8))
+        XCTAssertEqual(second.map { String(decoding: $0, as: UTF8.self) }, ["hello"])
+    }
+
+    func testLineBufferMultipleCompleteLinesInOneChunk() {
+        var buffer = LineBuffer()
+        let lines = buffer.append(Data("one\ntwo\nthree\n".utf8))
+        XCTAssertEqual(lines.map { String(decoding: $0, as: UTF8.self) }, ["one", "two", "three"])
+    }
+
+    func testLineBufferEmptyLines() {
+        var buffer = LineBuffer()
+        let lines = buffer.append(Data("a\n\n\nb\n".utf8))
+        XCTAssertEqual(lines.map { String(decoding: $0, as: UTF8.self) }, ["a", "", "", "b"])
+    }
+
+    func testLineBufferLeftoverPartialDataRetainedWithNoTrailingNewline() {
+        var buffer = LineBuffer()
+        let lines = buffer.append(Data("complete\nincomplete".utf8))
+        XCTAssertEqual(lines.map { String(decoding: $0, as: UTF8.self) }, ["complete"])
+
+        // Nothing more arrives with a newline yet — leftover stays buffered.
+        let more = buffer.append(Data())
+        XCTAssertEqual(more, [])
+
+        let final = buffer.append(Data(" data\n".utf8))
+        XCTAssertEqual(final.map { String(decoding: $0, as: UTF8.self) }, ["incomplete data"])
+    }
+
+    // MARK: - Backoff
+
+    func testBackoffDoublingSequence() {
+        var backoff = Backoff()
+        XCTAssertEqual(backoff.next(), 1)
+        XCTAssertEqual(backoff.next(), 2)
+        XCTAssertEqual(backoff.next(), 4)
+        XCTAssertEqual(backoff.next(), 8)
+        XCTAssertEqual(backoff.next(), 10, "should cap at 10")
+        XCTAssertEqual(backoff.next(), 10, "should remain capped at 10")
+    }
+
+    func testBackoffReset() {
+        var backoff = Backoff()
+        _ = backoff.next()
+        _ = backoff.next()
+        _ = backoff.next()
+        backoff.reset()
+        XCTAssertEqual(backoff.next(), 1)
     }
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PopoverContentView: View {
-    @ObservedObject var viewModel: TrayViewModel
+    var viewModel: TrayViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -32,18 +32,18 @@ struct PopoverContentView: View {
                 if !viewModel.version.isEmpty {
                     Text("v\(viewModel.version)")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
             }
 
             if case .protocolMismatch = viewModel.connectionState {
                 Text("Update tray or daemon to match")
                     .font(.system(size: 11))
-                    .foregroundColor(.orange)
+                    .foregroundStyle(.orange)
             } else {
                 Text("Processed: \(viewModel.processed) files")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -63,13 +63,16 @@ struct PopoverContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Recent Files")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
 
             if viewModel.recentFiles.isEmpty {
                 Text("(none)")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             } else {
+                // Positional identity: RecentFile has no collision-proof id
+                // (daemon timestamps are 1s granularity), and the list is
+                // replaced wholesale on each state push, so offset is safe.
                 ForEach(Array(viewModel.recentFiles.enumerated()), id: \.offset) { _, file in
                     recentFileRow(file)
                 }
@@ -84,11 +87,11 @@ struct PopoverContentView: View {
                 if file.dryRun {
                     Text("dry-run")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.orange)
+                        .foregroundStyle(.orange)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(Color.orange.opacity(0.12))
-                        .cornerRadius(3)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 Text(file.filename)
                     .font(.system(size: 12, weight: .medium))
@@ -97,13 +100,13 @@ struct PopoverContentView: View {
             HStack(spacing: 4) {
                 Text(file.rule)
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 Image(systemName: "arrow.right")
                     .font(.system(size: 8))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 Text(file.action)
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
@@ -119,7 +122,7 @@ struct PopoverContentView: View {
                     .gridColumnAlignment(.leading)
                 Toggle("", isOn: Binding(
                     get: { viewModel.dryRun },
-                    set: { _ in viewModel.onToggleDryRun?() }
+                    set: { _ in viewModel.perform(.toggleDryRun) }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.small)
@@ -132,10 +135,7 @@ struct PopoverContentView: View {
                 Text("Notifications")
                 Toggle("", isOn: Binding(
                     get: { viewModel.notificationsEnabled },
-                    set: { _ in
-                        viewModel.onToggleNotifications?()
-                        viewModel.notificationsEnabled = NotificationManager.shared.isEnabled
-                    }
+                    set: { _ in viewModel.perform(.toggleNotifications) }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.small)
@@ -151,22 +151,22 @@ struct PopoverContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Rules")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
 
             if viewModel.rules.isEmpty {
                 Text("(none)")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             } else {
                 Grid(alignment: .leading, verticalSpacing: 4) {
-                    ForEach(Array(viewModel.rules.enumerated()), id: \.offset) { _, rule in
+                    ForEach(viewModel.rules) { rule in
                         GridRow {
                             Text(rule.name)
                                 .font(.system(size: 12, weight: .medium))
                                 .gridColumnAlignment(.leading)
                             Text(rule.actionType)
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                                 .gridColumnAlignment(.leading)
                         }
                     }
@@ -180,7 +180,7 @@ struct PopoverContentView: View {
 
     private var actionsSection: some View {
         VStack(spacing: 6) {
-            Button(action: { viewModel.onOpenConfig?() }) {
+            Button(action: { viewModel.perform(.openConfig) }) {
                 HStack {
                     Image(systemName: "doc.text")
                         .font(.system(size: 11))
@@ -194,7 +194,7 @@ struct PopoverContentView: View {
 
             Divider()
 
-            Button(action: { viewModel.onQuit?() }) {
+            Button(action: { viewModel.perform(.quit) }) {
                 HStack {
                     Image(systemName: "power")
                         .font(.system(size: 11))
@@ -203,10 +203,11 @@ struct PopoverContentView: View {
                     Spacer()
                     Text("\u{2318}Q")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("q")
         }
         .padding(12)
     }

@@ -114,21 +114,21 @@ tasks:
     desc: Build and install binaries and load launchd agents
     deps: [build]
     cmds:
-      - sudo cp build/avella /usr/local/bin/avella
+      - launchctl bootout gui/$(id -u)/xyz.endymion.avella 2>/dev/null || true
+      - launchctl bootout gui/$(id -u)/xyz.endymion.avella-tray 2>/dev/null || true
+      - sudo install -m 755 build/avella /usr/local/bin/avella
       - sudo rm -rf /Applications/AvellaTray.app
       - sudo cp -R build/AvellaTray.app /Applications/
       - cp xyz.endymion.avella.plist ~/Library/LaunchAgents/
       - cp xyz.endymion.avella-tray.plist ~/Library/LaunchAgents/
-      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella.plist 2>/dev/null || true
-      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist 2>/dev/null || true
-      - launchctl load ~/Library/LaunchAgents/xyz.endymion.avella.plist
-      - launchctl load ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
+      - launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/xyz.endymion.avella.plist
+      - launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
 
   uninstall:
     desc: Unload launchd agents and remove binaries
     cmds:
-      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella.plist || true
-      - launchctl unload ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist || true
+      - launchctl bootout gui/$(id -u)/xyz.endymion.avella 2>/dev/null || true
+      - launchctl bootout gui/$(id -u)/xyz.endymion.avella-tray 2>/dev/null || true
       - rm -f ~/Library/LaunchAgents/xyz.endymion.avella.plist
       - rm -f ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
       - sudo rm -f /usr/local/bin/avella

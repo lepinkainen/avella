@@ -115,21 +115,24 @@ tasks:
     deps: [build]
     cmds:
       - launchctl bootout gui/$(id -u)/xyz.endymion.avella 2>/dev/null || true
+      # Legacy cleanup: the tray now autolaunches via SMAppService, not launchd.
       - launchctl bootout gui/$(id -u)/xyz.endymion.avella-tray 2>/dev/null || true
+      - rm -f ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
       - sudo install -m 755 build/avella /usr/local/bin/avella
       - sudo rm -rf /Applications/AvellaTray.app
       - sudo cp -R build/AvellaTray.app /Applications/
       - cp xyz.endymion.avella.plist ~/Library/LaunchAgents/
-      - cp xyz.endymion.avella-tray.plist ~/Library/LaunchAgents/
       - launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/xyz.endymion.avella.plist
-      - launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
 
   uninstall:
     desc: Unload launchd agents and remove binaries
     cmds:
       - launchctl bootout gui/$(id -u)/xyz.endymion.avella 2>/dev/null || true
-      - launchctl bootout gui/$(id -u)/xyz.endymion.avella-tray 2>/dev/null || true
       - rm -f ~/Library/LaunchAgents/xyz.endymion.avella.plist
+      # Legacy cleanup: the tray used to autolaunch via its own launchd agent;
+      # it's now handled by SMAppService from within the app. Best-effort
+      # removal for upgraders who still have the old agent installed.
+      - launchctl bootout gui/$(id -u)/xyz.endymion.avella-tray 2>/dev/null || true
       - rm -f ~/Library/LaunchAgents/xyz.endymion.avella-tray.plist
       - sudo rm -f /usr/local/bin/avella
       - sudo rm -rf /Applications/AvellaTray.app

@@ -56,13 +56,19 @@ rules:
 | `validate_zip` | Check ZIP integrity (`"true"` for structure, `"full"` for CRC-32 verification) |
 | `notify` | macOS notification via `osascript` |
 
+## Menu bar app
+
+`tray/` is a SwiftUI menu bar companion app (AvellaTray.app) that talks to the daemon over a unix socket. It shows live status — connection state, processed count, recent files, active rules — with toggles for dry-run and notifications, and posts a native notification when a file is processed (tapping it reveals the file in Finder). A Settings window has a Launch at Login toggle backed by `SMAppService`.
+
 ## Building
 
 Requires [Go](https://go.dev/) and [Task](https://taskfile.dev/):
 
 ```bash
-task build    # test + lint + build → build/avella
+task build    # test + lint + build → build/avella + build/AvellaTray.app
 ```
+
+The daemon itself is plain Go and cross-platform. The menu bar app (`tray/`) is macOS-only and additionally requires a Swift 6.2+ toolchain and macOS 14+. `task build` builds both on macOS; `task build-go` / `task build-linux` build just the daemon.
 
 ## Usage
 
@@ -76,7 +82,7 @@ avella -v                  # verbose logging
 
 ## Installation
 
-This is a personal project — there's no package or installer. Fork the repo and build it yourself. The example plist files in the repo can be used to run it as a launchd service on macOS.
+This is a personal project — there's no package or installer. Fork the repo and build it yourself. The example [`xyz.endymion.avella.plist`](xyz.endymion.avella.plist) can be used to run the daemon as a launchd service on macOS. The menu bar app manages its own autostart via its Settings window's Launch at Login toggle — no launchd agent needed for it.
 
 ## License
 

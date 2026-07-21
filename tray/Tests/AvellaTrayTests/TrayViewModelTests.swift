@@ -187,4 +187,56 @@ final class TrayViewModelTests: XCTestCase {
         vm.update(state: makeState())
         XCTAssertTrue(vm.isConnected)
     }
+
+    // MARK: - Launch at login
+
+    func testLaunchAtLoginReflectsInitialServiceStatus() {
+        let vm = TrayViewModel(loginItem: FakeLoginItem(enabled: true))
+        XCTAssertTrue(vm.launchAtLoginEnabled)
+    }
+
+    func testSetLaunchAtLoginRegisters() {
+        let fake = FakeLoginItem(enabled: false)
+        let vm = TrayViewModel(loginItem: fake)
+
+        vm.setLaunchAtLogin(true)
+
+        XCTAssertEqual(fake.setCalls, [true])
+        XCTAssertTrue(vm.launchAtLoginEnabled)
+        XCTAssertNil(vm.launchAtLoginError)
+    }
+
+    func testSetLaunchAtLoginSurfacesErrorAndReconciles() {
+        // A failed register leaves the service disabled; the flag must track
+        // the service's authoritative status, not the requested value.
+        let fake = FakeLoginItem(enabled: false)
+        fake.errorToThrow = FakeError.boom
+        let vm = TrayViewModel(loginItem: fake)
+
+        vm.setLaunchAtLogin(true)
+
+        XCTAssertFalse(vm.launchAtLoginEnabled)
+        XCTAssertNotNil(vm.launchAtLoginError)
+    }
+}
+
+private enum FakeError: Error { case boom }
+
+@MainActor
+private final class FakeLoginItem: LoginItemControlling {
+    var enabled: Bool
+    var errorToThrow: Error?
+    private(set) var setCalls: [Bool] = []
+
+    init(enabled: Bool) {
+        self.enabled = enabled
+    }
+
+    var isEnabled: Bool { enabled }
+
+    func setEnabled(_ enabled: Bool) throws {
+        setCalls.append(enabled)
+        if let errorToThrow { throw errorToThrow }
+        self.enabled = enabled
+    }
 }

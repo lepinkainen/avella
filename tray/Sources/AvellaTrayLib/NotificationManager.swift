@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import UserNotifications
@@ -69,6 +70,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - UNUserNotificationCenterDelegate
 
+    /// Key under which the destination file path is stashed in a
+    /// notification's `userInfo`, read back when the banner is tapped.
+    nonisolated static let filePathUserInfoKey = "filePath"
+
     /// Show notifications even when the app is in the foreground.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
@@ -76,6 +81,22 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .sound])
+    }
+
+    /// Tapping a banner reveals the processed file in Finder.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let path = response.notification.request.content.userInfo[Self.filePathUserInfoKey] as? String
+        completionHandler()
+
+        guard let path, !path.isEmpty else { return }
+        // Delegate callbacks are nonisolated; NSWorkspace is main-actor bound.
+        Task { @MainActor in
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        }
     }
 
     // MARK: - Private
@@ -96,6 +117,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         content.title = file.dryRun ? "[dry-run] Avella: \(file.rule)" : "Avella: \(file.rule)"
         content.body = "\(file.filename) \u{2192} \(file.action)"
         content.sound = .default
+        // Carry the destination path so a tap can reveal it in Finder.
+        content.userInfo = [Self.filePathUserInfoKey: file.action]
 
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,

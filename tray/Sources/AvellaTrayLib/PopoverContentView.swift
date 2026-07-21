@@ -1,9 +1,13 @@
 import SwiftUI
 
-struct PopoverContentView: View {
+public struct PopoverContentView: View {
     var viewModel: TrayViewModel
 
-    var body: some View {
+    public init(viewModel: TrayViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerSection
             Divider()
@@ -191,6 +195,17 @@ struct PopoverContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(!viewModel.isConnected)
+
+            SettingsLink {
+                HStack {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11))
+                    Text("Settings\u{2026}")
+                        .font(.system(size: 12))
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
 
             Divider()
 

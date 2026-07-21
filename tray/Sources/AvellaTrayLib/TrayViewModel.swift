@@ -12,7 +12,7 @@ enum TrayAction {
 /// Observable view model that bridges socket events to SwiftUI's reactive model.
 @MainActor
 @Observable
-final class TrayViewModel {
+public final class TrayViewModel {
     enum ConnectionState {
         case disconnected
         case connected
@@ -25,6 +25,20 @@ final class TrayViewModel {
     var recentFiles: [RecentFile] = []
     var rules: [RuleInfo] = []
     var version: String = ""
+
+    /// Whether the app is registered to launch at login. Reflects the
+    /// authoritative `SMAppService` status, re-read after every toggle.
+    var launchAtLoginEnabled: Bool
+    /// Last non-fatal launch-at-login error, surfaced in Settings.
+    var launchAtLoginError: String?
+
+    /// Backing service for launch-at-login; injectable for testing.
+    @ObservationIgnored private let loginItem: any LoginItemControlling
+
+    init(loginItem: any LoginItemControlling = SMAppServiceLoginItem()) {
+        self.loginItem = loginItem
+        self.launchAtLoginEnabled = loginItem.isEnabled
+    }
 
     /// Single source of truth is the @Observable NotificationManager;
     /// observation tracking flows through this computed access.
@@ -77,5 +91,18 @@ final class TrayViewModel {
 
     func setProtocolMismatch(daemon: Int, tray: Int) {
         connectionState = .protocolMismatch(daemon: daemon, tray: tray)
+    }
+
+    /// Registers or unregisters the app as a login item. Failures are
+    /// non-fatal: the error is surfaced and the flag is reconciled with the
+    /// service's authoritative status rather than the requested value.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            try loginItem.setEnabled(enabled)
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = "Launch at Login: \(error.localizedDescription)"
+        }
+        launchAtLoginEnabled = loginItem.isEnabled
     }
 }

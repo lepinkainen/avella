@@ -6,8 +6,15 @@ struct AvellaTrayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
+        MenuBarExtra {
+            PopoverContentView(viewModel: appDelegate.viewModel)
+        } label: {
+            MenuBarLabel(viewModel: appDelegate.viewModel)
+        }
+        .menuBarExtraStyle(.window)
+
         Settings {
-            EmptyView()
+            SettingsView(viewModel: appDelegate.viewModel)
         }
     }
 }

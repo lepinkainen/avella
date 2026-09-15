@@ -29,6 +29,9 @@ type SSH struct {
 	Host string `mapstructure:"host"`
 	User string `mapstructure:"user"`
 	Key  string `mapstructure:"key"`
+	// AgentSock overrides SSH_AUTH_SOCK. Needed when the daemon runs under
+	// launchd, which injects Apple's empty agent instead of the user's.
+	AgentSock string `mapstructure:"agent_sock"`
 }
 
 // Rule defines a file matching rule and its actions.
@@ -254,6 +257,13 @@ func (c *Config) expandPaths() error {
 			return fmt.Errorf("ssh host %q key: %w", name, err)
 		}
 		ssh.Key = expanded
+
+		expandedSock, err := pathutil.ExpandHome(ssh.AgentSock)
+		if err != nil {
+			return fmt.Errorf("ssh host %q agent_sock: %w", name, err)
+		}
+		ssh.AgentSock = expandedSock
+
 		c.SSHHosts[name] = ssh
 	}
 

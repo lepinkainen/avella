@@ -64,7 +64,8 @@ func (p *Pool) dial(name string) (*ssh.Client, error) {
 
 // authMethod returns the SSH auth method for a host config.
 // If a key file is configured, it uses public key auth.
-// Otherwise, it falls back to the SSH agent (e.g. 1Password, ssh-agent).
+// Otherwise it falls back to the SSH agent (e.g. 1Password, ssh-agent) at
+// agent_sock, or SSH_AUTH_SOCK when agent_sock is unset.
 func (p *Pool) authMethod(hostCfg config.SSH) (ssh.AuthMethod, error) {
 	if hostCfg.Key != "" {
 		keyData, err := os.ReadFile(hostCfg.Key)
@@ -78,9 +79,12 @@ func (p *Pool) authMethod(hostCfg config.SSH) (ssh.AuthMethod, error) {
 		return ssh.PublicKeys(signer), nil
 	}
 
-	sock := os.Getenv("SSH_AUTH_SOCK")
+	sock := hostCfg.AgentSock
 	if sock == "" {
-		return nil, fmt.Errorf("no SSH key configured and SSH_AUTH_SOCK not set")
+		sock = os.Getenv("SSH_AUTH_SOCK")
+	}
+	if sock == "" {
+		return nil, fmt.Errorf("no SSH key or agent_sock configured and SSH_AUTH_SOCK not set")
 	}
 
 	conn, err := net.Dial("unix", sock)

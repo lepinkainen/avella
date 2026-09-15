@@ -187,9 +187,16 @@ func (u *SocketUI) resolveSocketPath() (string, error) {
 }
 
 func removeStaleSocket(ctx context.Context, path string) error {
-	// Check if something is already listening.
-	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
-	conn, err := dialer.DialContext(ctx, "unix", path)
+	// Check if something is already listening. The probe is deliberately not
+	// cancellable by the lifecycle context: a dial failure here is taken as
+	// proof the socket is stale, so a cancellation racing the probe would
+	// unlink the socket of a daemon that is very much alive. Its own timeout
+	// is the only bound it needs.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(probeCtx, "unix", path)
 	if err == nil {
 		_ = conn.Close()
 		return fmt.Errorf("socket %s is active: %w", path, errDaemonRunning)
@@ -269,9 +276,17 @@ func (u *SocketUI) handleCommand(ctx context.Context, cmd string) {
 		path := u.st.ConfigPath
 		u.mu.Unlock()
 		if path != "" {
-			if err := exec.CommandContext(ctx, "open", path).Start(); err != nil {
-				slog.Error("failed to open config file", "path", path, "error", err)
-			}
+			// Run to completion off the command loop. CommandContext spawns a
+			// goroutine that lives until the process is reaped or ctx ends, so
+			// Start without Wait would leak one per click for the daemon's
+			// whole life — and leave the child unreaped besides.
+			go func() {
+				openCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				if err := exec.CommandContext(openCtx, "open", path).Run(); err != nil {
+					slog.Error("failed to open config file", "path", path, "error", err)
+				}
+			}()
 		}
 
 	case "quit":

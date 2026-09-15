@@ -393,6 +393,24 @@ func TestRemoveStaleSocketNonexistent(t *testing.T) {
 	}
 }
 
+func TestRemoveStaleSocketCanceledContextKeepsActiveSocket(t *testing.T) {
+	// A canceled lifecycle context must not make the probe conclude that a live
+	// daemon's socket is stale and unlink it.
+	_, sockPath, cancelServer := startTestServer(t)
+	defer cancelServer()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := removeStaleSocket(ctx, sockPath)
+	if !errors.Is(err, errDaemonRunning) {
+		t.Fatalf("expected errDaemonRunning for a live socket, got: %v", err)
+	}
+	if _, statErr := os.Stat(sockPath); statErr != nil {
+		t.Fatalf("active socket was removed: %v", statErr)
+	}
+}
+
 func TestDuplicateDaemonBlockedByActiveSocket(t *testing.T) {
 	// Start first server — this creates an active listener.
 	_, sockPath, cancel1 := startTestServer(t)

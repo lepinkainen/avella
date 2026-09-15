@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,12 +20,7 @@ var SkipExtensions = []string{".part", ".tmp", ".crdownload", ".download", ".kex
 // ShouldSkip returns true if the file has an extension indicating it's still downloading.
 func ShouldSkip(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	for _, skip := range SkipExtensions {
-		if ext == skip {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(SkipExtensions, ext)
 }
 
 // WaitStable polls a file's size and returns nil once the size is unchanged

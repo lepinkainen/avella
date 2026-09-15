@@ -59,7 +59,7 @@ func TestWaitStableGrowingFile(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			time.Sleep(15 * time.Millisecond)
 			f.WriteString("more")
 		}

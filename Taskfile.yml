@@ -3,6 +3,10 @@ version: '3'
 vars:
   BUILD_DIR: build
   PROJECT_NAME: avella
+  # Own packages only. `go fix` mutates source, and llm-shared is a read-only
+  # submodule that a bare ./... would rewrite and leave dirty.
+  GO_PACKAGES:
+    sh: go list ./... | grep -v -e llm-shared -e tray | tr '\n' ' '
   VERSION:
     sh: |
       tag=$(git describe --tags 2>/dev/null || echo "dev")
@@ -16,18 +20,22 @@ vars:
 tasks:
   build:
     desc: Build the project
-    deps: [test, lint]
+    # Sequenced, not deps: Task runs deps in parallel, and `go mod tidy` in
+    # lint races `go test` into a spurious "missing go.sum entry".
     cmds:
+      - task: lint
+      - task: test
       - task: build-go
       - task: build-tray
 
   build-linux:
     desc: Build for Linux
-    deps: [test, lint]
     env:
       GOOS: linux
       GOARCH: amd64
     cmds:
+      - task: lint
+      - task: test
       - task: build-go
 
   build-ci:
@@ -90,12 +98,12 @@ tasks:
   test-go:
     desc: Run Go tests
     cmds:
-      - go test $(go list ./... | grep -v -e llm-shared -e tray)
+      - go test {{.GO_PACKAGES}}
 
   test-go-ci:
     desc: Run Go tests with coverage for CI
     cmds:
-      - go test -tags=ci -cover -v $(go list ./... | grep -v -e llm-shared -e tray)
+      - go test -tags=ci -cover -v {{.GO_PACKAGES}}
 
   test-tray:
     desc: Run Swift tray unit tests
@@ -106,9 +114,29 @@ tasks:
   lint-go:
     desc: Lint Go code
     cmds:
+      # go fix first: its rewrites can add imports, which goimports then formats.
+      - go fix {{.GO_PACKAGES}}
       - find . -name "*.go" -not -path "./llm-shared/*" -not -path "./tray/*" -exec goimports -w {} +
-      - go vet $(go list ./... | grep -v -e llm-shared -e tray)
+      - go vet {{.GO_PACKAGES}}
       - golangci-lint run
+      - go mod tidy
+
+  vuln-go:
+    desc: Scan dependencies for known vulnerabilities (advisory, not gated on lint)
+    cmds:
+      - govulncheck {{.GO_PACKAGES}}
+
+  deadcode-go:
+    desc: Report unreachable functions (advisory, not gated on lint)
+    cmds:
+      # Interface-satisfying methods proven via `var _ Iface = (*T)(nil)` show up
+      # here as expected false positives.
+      - deadcode {{.GO_PACKAGES}}
+
+  cognit-go:
+    desc: Report functions with cognitive complexity over 20 (advisory, not gated on lint)
+    cmds:
+      - gocognit -over 20 -ignore 'llm-shared|tray' -json . | jq -r '.[] | "\(.Complexity)\t\(.PkgName).\(.FuncName)\t\(.Pos.Filename):\(.Pos.Line)"'
 
   install:
     desc: Build and install binaries and load launchd agents

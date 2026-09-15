@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -408,6 +409,46 @@ func TestRemoveStaleSocketCanceledContextKeepsActiveSocket(t *testing.T) {
 	}
 	if _, statErr := os.Stat(sockPath); statErr != nil {
 		t.Fatalf("active socket was removed: %v", statErr)
+	}
+}
+
+func TestOpenConfigDoesNotLeakGoroutines(t *testing.T) {
+	// exec.CommandContext spawns a watcher goroutine that only exits once the
+	// process is reaped or the context ends. Start without Wait therefore leaks
+	// one per click for as long as the daemon lives.
+	if runtime.GOOS != "darwin" {
+		t.Skip("open(1) is macOS-only")
+	}
+
+	u := NewSocket()
+	// A path open(1) rejects immediately: it exits non-zero without opening a
+	// window, so the test has no visible side effect.
+	u.SetConfigPath(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+
+	settle(t, runtime.NumGoroutine())
+	baseline := runtime.NumGoroutine()
+
+	const clicks = 5
+	for range clicks {
+		u.handleCommand(t.Context(), "open_config")
+	}
+
+	settle(t, baseline)
+	if leaked := runtime.NumGoroutine() - baseline; leaked >= clicks {
+		t.Fatalf("leaked %d goroutines after %d open_config commands", leaked, clicks)
+	}
+}
+
+// settle waits for the goroutine count to fall back to want, giving spawned
+// work a chance to finish before the caller samples it.
+func settle(t *testing.T, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

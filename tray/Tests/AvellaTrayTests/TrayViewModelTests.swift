@@ -2,241 +2,246 @@ import Foundation
 import XCTest
 @testable import AvellaTrayLib
 
+// MARK: - TrayViewModelTests
+
 @MainActor
 final class TrayViewModelTests: XCTestCase {
 
-    private func makeState(
-        status: String = "watching",
-        processed: Int = 5,
-        dryRun: Bool = false,
-        configPath: String = "/tmp/config.yaml",
-        rules: [[String: String]] = [["name": "videos", "action_type": "move"]],
-        version: String = "1.0.0",
-        recentFiles: [[String: Any]] = []
-    ) -> AppState {
-        var rulesJSON = "["
-        rulesJSON += rules.map { r in
-            "{\"name\": \"\(r["name"]!)\", \"action_type\": \"\(r["action_type"]!)\"}"
-        }.joined(separator: ",")
-        rulesJSON += "]"
+  // MARK: Internal
 
-        var recentJSON = "["
-        recentJSON += recentFiles.map { f in
-            """
-            {"filename":"\(f["filename"]!)","rule":"\(f["rule"]!)","action":"\(f["action"]!)","dry_run":\(f["dry_run"]!),"time":"\(f["time"]!)"}
-            """
-        }.joined(separator: ",")
-        recentJSON += "]"
+  func testInitialStateIsDisconnected() {
+    let vm = TrayViewModel()
+    XCTAssertEqual(vm.status, "Disconnected")
+    XCTAssertEqual(vm.processed, 0)
+    XCTAssertFalse(vm.dryRun)
+    XCTAssertTrue(vm.recentFiles.isEmpty)
+    XCTAssertTrue(vm.rules.isEmpty)
+    XCTAssertFalse(vm.isConnected)
+  }
 
-        let json = """
-        {
-            "status": "\(status)",
-            "processed": \(processed),
-            "dry_run": \(dryRun),
-            "config_path": "\(configPath)",
-            "rules": \(rulesJSON),
-            "version": "\(version)",
-            "recent_files": \(recentJSON)
-        }
-        """
-        return try! JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8))
-    }
+  func testUpdateReflectsState() {
+    let vm = TrayViewModel()
+    let state = makeState(status: "watching", processed: 42, dryRun: true, version: "1.2.3")
+    vm.update(state: state)
 
-    // MARK: - Initial state
+    XCTAssertEqual(vm.status, "watching")
+    XCTAssertEqual(vm.processed, 42)
+    XCTAssertTrue(vm.dryRun)
+    XCTAssertEqual(vm.version, "1.2.3")
+    XCTAssertTrue(vm.isConnected)
+  }
 
-    func testInitialStateIsDisconnected() {
-        let vm = TrayViewModel()
-        XCTAssertEqual(vm.status, "Disconnected")
-        XCTAssertEqual(vm.processed, 0)
-        XCTAssertFalse(vm.dryRun)
-        XCTAssertTrue(vm.recentFiles.isEmpty)
-        XCTAssertTrue(vm.rules.isEmpty)
-        XCTAssertFalse(vm.isConnected)
-    }
+  func testUpdateWithDryRunOff() {
+    let vm = TrayViewModel()
+    vm.update(state: makeState(dryRun: false))
+    XCTAssertFalse(vm.dryRun)
+  }
 
-    // MARK: - update(state:)
+  func testUpdateWithDryRunOn() {
+    let vm = TrayViewModel()
+    vm.update(state: makeState(dryRun: true))
+    XCTAssertTrue(vm.dryRun)
+  }
 
-    func testUpdateReflectsState() {
-        let vm = TrayViewModel()
-        let state = makeState(status: "watching", processed: 42, dryRun: true, version: "1.2.3")
-        vm.update(state: state)
+  func testRecentFilesPopulated() {
+    let vm = TrayViewModel()
+    let state = makeState(recentFiles: [
+      ["filename": "clip.mp4", "rule": "videos", "action": "/media/clip.mp4", "dry_run": false, "time": "T1"],
+      ["filename": "song.mp3", "rule": "music", "action": "/media/song.mp3", "dry_run": true, "time": "T2"],
+    ])
+    vm.update(state: state)
 
-        XCTAssertEqual(vm.status, "watching")
-        XCTAssertEqual(vm.processed, 42)
-        XCTAssertTrue(vm.dryRun)
-        XCTAssertEqual(vm.version, "1.2.3")
-        XCTAssertTrue(vm.isConnected)
-    }
+    XCTAssertEqual(vm.recentFiles.count, 2)
+    XCTAssertEqual(vm.recentFiles[0].filename, "clip.mp4")
+    XCTAssertEqual(vm.recentFiles[1].filename, "song.mp3")
+    XCTAssertTrue(vm.recentFiles[1].dryRun)
+  }
 
-    func testUpdateWithDryRunOff() {
-        let vm = TrayViewModel()
-        vm.update(state: makeState(dryRun: false))
-        XCTAssertFalse(vm.dryRun)
-    }
+  func testRulesPopulated() {
+    let vm = TrayViewModel()
+    let state = makeState(rules: [
+      ["name": "videos", "action_type": "move"],
+      ["name": "music", "action_type": "scp"],
+    ])
+    vm.update(state: state)
 
-    func testUpdateWithDryRunOn() {
-        let vm = TrayViewModel()
-        vm.update(state: makeState(dryRun: true))
-        XCTAssertTrue(vm.dryRun)
-    }
+    XCTAssertEqual(vm.rules.count, 2)
+    XCTAssertEqual(vm.rules[0].name, "videos")
+    XCTAssertEqual(vm.rules[0].actionType, "move")
+    XCTAssertEqual(vm.rules[1].name, "music")
+    XCTAssertEqual(vm.rules[1].actionType, "scp")
+  }
 
-    func testRecentFilesPopulated() {
-        let vm = TrayViewModel()
-        let state = makeState(recentFiles: [
-            ["filename": "clip.mp4", "rule": "videos", "action": "/media/clip.mp4", "dry_run": false, "time": "T1"],
-            ["filename": "song.mp3", "rule": "music", "action": "/media/song.mp3", "dry_run": true, "time": "T2"],
-        ])
-        vm.update(state: state)
+  func testSetDisconnectedResetsState() {
+    let vm = TrayViewModel()
+    vm.update(state: makeState(status: "watching", processed: 10, dryRun: true))
+    XCTAssertTrue(vm.isConnected)
 
-        XCTAssertEqual(vm.recentFiles.count, 2)
-        XCTAssertEqual(vm.recentFiles[0].filename, "clip.mp4")
-        XCTAssertEqual(vm.recentFiles[1].filename, "song.mp3")
-        XCTAssertTrue(vm.recentFiles[1].dryRun)
-    }
+    vm.setDisconnected()
 
-    func testRulesPopulated() {
-        let vm = TrayViewModel()
-        let state = makeState(rules: [
-            ["name": "videos", "action_type": "move"],
-            ["name": "music", "action_type": "scp"],
-        ])
-        vm.update(state: state)
+    XCTAssertEqual(vm.status, "Disconnected")
+    XCTAssertEqual(vm.processed, 0)
+    XCTAssertFalse(vm.dryRun)
+    XCTAssertTrue(vm.recentFiles.isEmpty)
+    XCTAssertTrue(vm.rules.isEmpty)
+    XCTAssertFalse(vm.isConnected)
+  }
 
-        XCTAssertEqual(vm.rules.count, 2)
-        XCTAssertEqual(vm.rules[0].name, "videos")
-        XCTAssertEqual(vm.rules[0].actionType, "move")
-        XCTAssertEqual(vm.rules[1].name, "music")
-        XCTAssertEqual(vm.rules[1].actionType, "scp")
-    }
+  func testSetProtocolMismatch() {
+    let vm = TrayViewModel()
+    vm.setProtocolMismatch(daemon: 2, tray: 1)
 
-    // MARK: - setDisconnected
+    XCTAssertTrue(vm.status.contains("Protocol mismatch"))
+    XCTAssertTrue(vm.status.contains("v2"))
+    XCTAssertTrue(vm.status.contains("v1"))
+    XCTAssertFalse(vm.isConnected)
+  }
 
-    func testSetDisconnectedResetsState() {
-        let vm = TrayViewModel()
-        vm.update(state: makeState(status: "watching", processed: 10, dryRun: true))
-        XCTAssertTrue(vm.isConnected)
+  func testActionsAreFired() {
+    let vm = TrayViewModel()
 
-        vm.setDisconnected()
+    var firedActions = [TrayAction]()
+    vm.onAction = { action in firedActions.append(action) }
 
-        XCTAssertEqual(vm.status, "Disconnected")
-        XCTAssertEqual(vm.processed, 0)
-        XCTAssertFalse(vm.dryRun)
-        XCTAssertTrue(vm.recentFiles.isEmpty)
-        XCTAssertTrue(vm.rules.isEmpty)
-        XCTAssertFalse(vm.isConnected)
-    }
+    vm.perform(.toggleDryRun)
+    vm.perform(.toggleNotifications)
+    vm.perform(.openConfig)
+    vm.perform(.quit)
 
-    // MARK: - setProtocolMismatch
+    XCTAssertEqual(firedActions.count, 4)
+    guard case .toggleDryRun = firedActions[0] else { return XCTFail("expected toggleDryRun") }
+    guard case .toggleNotifications = firedActions[1] else { return XCTFail("expected toggleNotifications") }
+    guard case .openConfig = firedActions[2] else { return XCTFail("expected openConfig") }
+    guard case .quit = firedActions[3] else { return XCTFail("expected quit") }
+  }
 
-    func testSetProtocolMismatch() {
-        let vm = TrayViewModel()
-        vm.setProtocolMismatch(daemon: 2, tray: 1)
+  func testNotificationsEnabledReflectsManagerWithoutManualSync() {
+    let mgr = NotificationManager.shared
+    let original = mgr.isEnabled
+    defer { mgr.setEnabled(original) }
 
-        XCTAssertTrue(vm.status.contains("Protocol mismatch"))
-        XCTAssertTrue(vm.status.contains("v2"))
-        XCTAssertTrue(vm.status.contains("v1"))
-        XCTAssertFalse(vm.isConnected)
-    }
+    let vm = TrayViewModel()
 
-    // MARK: - Actions
+    mgr.setEnabled(true)
+    XCTAssertTrue(vm.notificationsEnabled)
 
-    func testActionsAreFired() {
-        let vm = TrayViewModel()
+    mgr.setEnabled(false)
+    XCTAssertFalse(vm.notificationsEnabled)
+  }
 
-        var firedActions: [TrayAction] = []
-        vm.onAction = { action in firedActions.append(action) }
+  func testIsConnectedFalseForMismatch() {
+    let vm = TrayViewModel()
+    vm.setProtocolMismatch(daemon: 2, tray: 1)
+    XCTAssertFalse(vm.isConnected)
+  }
 
-        vm.perform(.toggleDryRun)
-        vm.perform(.toggleNotifications)
-        vm.perform(.openConfig)
-        vm.perform(.quit)
+  func testIsConnectedTrueAfterUpdate() {
+    let vm = TrayViewModel()
+    vm.update(state: makeState())
+    XCTAssertTrue(vm.isConnected)
+  }
 
-        XCTAssertEqual(firedActions.count, 4)
-        guard case .toggleDryRun = firedActions[0] else { return XCTFail("expected toggleDryRun") }
-        guard case .toggleNotifications = firedActions[1] else { return XCTFail("expected toggleNotifications") }
-        guard case .openConfig = firedActions[2] else { return XCTFail("expected openConfig") }
-        guard case .quit = firedActions[3] else { return XCTFail("expected quit") }
-    }
+  func testLaunchAtLoginReflectsInitialServiceStatus() {
+    let vm = TrayViewModel(loginItem: FakeLoginItem(enabled: true))
+    XCTAssertTrue(vm.launchAtLoginEnabled)
+  }
 
-    // MARK: - Notifications toggle
+  func testSetLaunchAtLoginRegisters() {
+    let fake = FakeLoginItem(enabled: false)
+    let vm = TrayViewModel(loginItem: fake)
 
-    func testNotificationsEnabledReflectsManagerWithoutManualSync() {
-        let mgr = NotificationManager.shared
-        let original = mgr.isEnabled
-        defer { mgr.setEnabled(original) }
+    vm.setLaunchAtLogin(true)
 
-        let vm = TrayViewModel()
+    XCTAssertEqual(fake.setCalls, [true])
+    XCTAssertTrue(vm.launchAtLoginEnabled)
+    XCTAssertNil(vm.launchAtLoginError)
+  }
 
-        mgr.setEnabled(true)
-        XCTAssertTrue(vm.notificationsEnabled)
+  func testSetLaunchAtLoginSurfacesErrorAndReconciles() {
+    // A failed register leaves the service disabled; the flag must track
+    // the service's authoritative status, not the requested value.
+    let fake = FakeLoginItem(enabled: false)
+    fake.errorToThrow = FakeError.boom
+    let vm = TrayViewModel(loginItem: fake)
 
-        mgr.setEnabled(false)
-        XCTAssertFalse(vm.notificationsEnabled)
-    }
+    vm.setLaunchAtLogin(true)
 
-    // MARK: - ConnectionState
+    XCTAssertFalse(vm.launchAtLoginEnabled)
+    XCTAssertNotNil(vm.launchAtLoginError)
+  }
 
-    func testIsConnectedFalseForMismatch() {
-        let vm = TrayViewModel()
-        vm.setProtocolMismatch(daemon: 2, tray: 1)
-        XCTAssertFalse(vm.isConnected)
-    }
+  // MARK: Private
 
-    func testIsConnectedTrueAfterUpdate() {
-        let vm = TrayViewModel()
-        vm.update(state: makeState())
-        XCTAssertTrue(vm.isConnected)
-    }
+  private func makeState(
+    status: String = "watching",
+    processed: Int = 5,
+    dryRun: Bool = false,
+    configPath: String = "/tmp/config.yaml",
+    rules: [[String: String]] = [["name": "videos", "action_type": "move"]],
+    version: String = "1.0.0",
+    recentFiles: [[String: Any]] = [],
+  ) -> AppState {
+    var rulesJSON = "["
+    rulesJSON += rules.lazy.map { r in
+      "{\"name\": \"\(r["name"]!)\", \"action_type\": \"\(r["action_type"]!)\"}"
+    }.joined(separator: ",")
+    rulesJSON += "]"
 
-    // MARK: - Launch at login
+    var recentJSON = "["
+    recentJSON += recentFiles.lazy.map { f in
+      """
+      {"filename":"\(f["filename"]!)","rule":"\(f["rule"]!)","action":"\(f["action"]!)","dry_run":\(f["dry_run"]!),"time":"\(f["time"]!)"}
+      """
+    }.joined(separator: ",")
+    recentJSON += "]"
 
-    func testLaunchAtLoginReflectsInitialServiceStatus() {
-        let vm = TrayViewModel(loginItem: FakeLoginItem(enabled: true))
-        XCTAssertTrue(vm.launchAtLoginEnabled)
-    }
+    let json = """
+      {
+          "status": "\(status)",
+          "processed": \(processed),
+          "dry_run": \(dryRun),
+          "config_path": "\(configPath)",
+          "rules": \(rulesJSON),
+          "version": "\(version)",
+          "recent_files": \(recentJSON)
+      }
+      """
+    return try! JSONDecoder.avella().decode(AppState.self, from: Data(json.utf8))
+  }
 
-    func testSetLaunchAtLoginRegisters() {
-        let fake = FakeLoginItem(enabled: false)
-        let vm = TrayViewModel(loginItem: fake)
-
-        vm.setLaunchAtLogin(true)
-
-        XCTAssertEqual(fake.setCalls, [true])
-        XCTAssertTrue(vm.launchAtLoginEnabled)
-        XCTAssertNil(vm.launchAtLoginError)
-    }
-
-    func testSetLaunchAtLoginSurfacesErrorAndReconciles() {
-        // A failed register leaves the service disabled; the flag must track
-        // the service's authoritative status, not the requested value.
-        let fake = FakeLoginItem(enabled: false)
-        fake.errorToThrow = FakeError.boom
-        let vm = TrayViewModel(loginItem: fake)
-
-        vm.setLaunchAtLogin(true)
-
-        XCTAssertFalse(vm.launchAtLoginEnabled)
-        XCTAssertNotNil(vm.launchAtLoginError)
-    }
 }
+
+// MARK: - FakeError
 
 private enum FakeError: Error { case boom }
 
+// MARK: - FakeLoginItem
+
 @MainActor
 private final class FakeLoginItem: LoginItemControlling {
-    var enabled: Bool
-    var errorToThrow: Error?
-    private(set) var setCalls: [Bool] = []
 
-    init(enabled: Bool) {
-        self.enabled = enabled
+  // MARK: Lifecycle
+
+  init(enabled: Bool) {
+    self.enabled = enabled
+  }
+
+  // MARK: Internal
+
+  var enabled: Bool
+  var errorToThrow: Error?
+  private(set) var setCalls = [Bool]()
+
+  var isEnabled: Bool {
+    enabled
+  }
+
+  func setEnabled(_ enabled: Bool) throws {
+    setCalls.append(enabled)
+    if let errorToThrow {
+      throw errorToThrow
     }
+    self.enabled = enabled
+  }
 
-    var isEnabled: Bool { enabled }
-
-    func setEnabled(_ enabled: Bool) throws {
-        setCalls.append(enabled)
-        if let errorToThrow { throw errorToThrow }
-        self.enabled = enabled
-    }
 }

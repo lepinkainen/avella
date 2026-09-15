@@ -3,6 +3,7 @@ version: '3'
 vars:
   BUILD_DIR: build
   PROJECT_NAME: avella
+  SWIFTFORMAT_ARGS: --config tray/airbnb.swiftformat tray/Sources tray/Tests
   # Own packages only. `go fix` mutates source, and llm-shared is a read-only
   # submodule that a bare ./... would rewrite and leave dirty.
   GO_PACKAGES:
@@ -58,6 +59,10 @@ tasks:
     desc: Lint code
     cmds:
       - task: lint-go
+      - |
+        if [ "$(uname -s)" = "Darwin" ]; then
+          task lint-tray
+        fi
 
   clean:
     desc: Clean build artifacts
@@ -120,6 +125,18 @@ tasks:
       - go vet {{.GO_PACKAGES}}
       - golangci-lint run
       - go mod tidy
+
+  lint-tray:
+    desc: Check tray Swift formatting (Airbnb style guide via SwiftFormat)
+    platforms: [darwin]
+    cmds:
+      - swiftformat --lint {{.SWIFTFORMAT_ARGS}}
+
+  format-tray:
+    desc: Apply Airbnb SwiftFormat style to tray Swift sources
+    platforms: [darwin]
+    cmds:
+      - swiftformat {{.SWIFTFORMAT_ARGS}}
 
   vuln-go:
     desc: Scan dependencies for known vulnerabilities (advisory, not gated on lint)

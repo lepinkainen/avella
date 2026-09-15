@@ -1,0 +1,5 @@
+# Pinned dev tools. swiftformat must match `--minversion` in
+# tray/airbnb.swiftformat — bump both together or lint output drifts between
+# machines.
+[tools]
+swiftformat = "0.63.0"

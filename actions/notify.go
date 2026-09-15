@@ -27,13 +27,13 @@ func (a *NotifyAction) Describe(path string) string {
 }
 
 // Execute sends a macOS notification with the expanded message.
-func (a *NotifyAction) Execute(_ context.Context, path string) error {
+func (a *NotifyAction) Execute(ctx context.Context, path string) error {
 	msg, err := template.ResolveDest(a.Message, path)
 	if err != nil {
 		return fmt.Errorf("resolve notify message: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	script := fmt.Sprintf(`display notification %q with title "Avella"`, msg)

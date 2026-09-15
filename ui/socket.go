@@ -133,7 +133,7 @@ func (u *SocketUI) Run(ctx context.Context, cancel context.CancelFunc, daemon fu
 	u.sockPath = sockPath
 
 	// Clean up stale socket file or detect a running daemon.
-	if staleErr := removeStaleSocket(sockPath); staleErr != nil {
+	if staleErr := removeStaleSocket(ctx, sockPath); staleErr != nil {
 		if errors.Is(staleErr, errDaemonRunning) {
 			slog.Error("cannot start: another daemon is already running", "path", sockPath)
 			cancel()
@@ -144,7 +144,8 @@ func (u *SocketUI) Run(ctx context.Context, cancel context.CancelFunc, daemon fu
 		return
 	}
 
-	ln, listenErr := net.Listen("unix", sockPath)
+	var lc net.ListenConfig
+	ln, listenErr := lc.Listen(ctx, "unix", sockPath)
 	if listenErr != nil {
 		slog.Error("failed to listen on socket", "path", sockPath, "error", listenErr)
 		daemon(ctx)
@@ -185,9 +186,17 @@ func (u *SocketUI) resolveSocketPath() (string, error) {
 	return filepath.Join(dir, socketFileName), nil
 }
 
-func removeStaleSocket(path string) error {
-	// Check if something is already listening.
-	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+func removeStaleSocket(ctx context.Context, path string) error {
+	// Check if something is already listening. The probe is deliberately not
+	// cancellable by the lifecycle context: a dial failure here is taken as
+	// proof the socket is stale, so a cancellation racing the probe would
+	// unlink the socket of a daemon that is very much alive. Its own timeout
+	// is the only bound it needs.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(probeCtx, "unix", path)
 	if err == nil {
 		_ = conn.Close()
 		return fmt.Errorf("socket %s is active: %w", path, errDaemonRunning)
@@ -240,11 +249,11 @@ func (u *SocketUI) handleClient(ctx context.Context, conn net.Conn) {
 			slog.Warn("invalid message from tray client", "error", err)
 			continue
 		}
-		u.handleCommand(msg.Command)
+		u.handleCommand(ctx, msg.Command)
 	}
 }
 
-func (u *SocketUI) handleCommand(cmd string) {
+func (u *SocketUI) handleCommand(ctx context.Context, cmd string) {
 	switch cmd {
 	case "toggle_dry_run":
 		u.mu.Lock()
@@ -267,9 +276,17 @@ func (u *SocketUI) handleCommand(cmd string) {
 		path := u.st.ConfigPath
 		u.mu.Unlock()
 		if path != "" {
-			if err := exec.Command("open", path).Start(); err != nil {
-				slog.Error("failed to open config file", "path", path, "error", err)
-			}
+			// Run to completion off the command loop. CommandContext spawns a
+			// goroutine that lives until the process is reaped or ctx ends, so
+			// Start without Wait would leak one per click for the daemon's
+			// whole life — and leave the child unreaped besides.
+			go func() {
+				openCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				if err := exec.CommandContext(openCtx, "open", path).Run(); err != nil {
+					slog.Error("failed to open config file", "path", path, "error", err)
+				}
+			}()
 		}
 
 	case "quit":

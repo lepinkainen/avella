@@ -171,24 +171,35 @@ func (c *Config) Validate() error {
 	}
 
 	for i, rule := range c.Rules {
-		if rule.Name == "" {
-			return fmt.Errorf("rule %d: name is required", i)
+		if err := c.validateRule(i, rule); err != nil {
+			return err
 		}
-		if err := validateMatchRule(rule.Name, rule.Match); err != nil {
-			return fmt.Errorf("rule %q: %w", rule.Name, err)
-		}
-		for j, action := range rule.Actions {
-			if err := c.validateAction(rule.Name, "action", j, action); err != nil {
-				return err
-			}
-		}
-		for j, action := range rule.OnSuccess {
-			if err := c.validateAction(rule.Name, "on_success", j, action); err != nil {
-				return err
-			}
-		}
-		for j, action := range rule.OnFail {
-			if err := c.validateAction(rule.Name, "on_fail", j, action); err != nil {
+	}
+
+	return nil
+}
+
+// validateRule checks a single rule's name, match criteria and every action in
+// its primary and hook lists. index is used only to name an unnamed rule.
+func (c *Config) validateRule(index int, rule Rule) error {
+	if rule.Name == "" {
+		return fmt.Errorf("rule %d: name is required", index)
+	}
+	if err := validateMatchRule(rule.Name, rule.Match); err != nil {
+		return fmt.Errorf("rule %q: %w", rule.Name, err)
+	}
+
+	lists := []struct {
+		name    string
+		actions []ActionConfig
+	}{
+		{"action", rule.Actions},
+		{"on_success", rule.OnSuccess},
+		{"on_fail", rule.OnFail},
+	}
+	for _, list := range lists {
+		for j, action := range list.actions {
+			if err := c.validateAction(rule.Name, list.name, j, action); err != nil {
 				return err
 			}
 		}

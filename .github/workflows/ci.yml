@@ -6,32 +6,115 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
-          go-version: "1.27"
+          go-version-file: go.mod # Single source of truth — do not pin a literal here
+          cache: true
 
-      - uses: go-task/setup-task@v2
+      - name: Install Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
 
-      - name: Install tools
-        run: go install golang.org/x/tools/cmd/goimports@latest
-
-      - name: Test
+      - name: Run tests with coverage
         run: task test-ci
 
-      - name: Lint (goimports + go vet)
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@latest
+
+      # CI checks formatting rather than rewriting it — `task lint` mutates
+      # files, which would pass silently here and leave the repo unformatted.
+      - name: Check formatting
         run: |
-          find . -name "*.go" -not -path "./llm-shared/*" -not -path "./tray/*" -exec goimports -w {} +
-          go vet $(go list ./... | grep -v -e llm-shared -e tray)
+          unformatted=$(goimports -l . | grep -v -e '^llm-shared/' -e '^tray/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "Not formatted with goimports:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet $(go list ./... | grep -v -e llm-shared -e tray)
 
       - uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+          args: --timeout=5m
+
+  # The tray is Swift and macOS-only, so it gets its own runner. The ubuntu
+  # jobs above never build it.
+  tray:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Install SwiftFormat
+        # Pinned release binary; brew on the runner image lags and won't upgrade
+        # an already-installed formula. Keep in step with --minversion in
+        # tray/airbnb.swiftformat and the pin in mise.toml.
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/swiftformat.zip" https://github.com/nicklockwood/SwiftFormat/releases/download/0.63.0/swiftformat.zip
+          mkdir -p "$RUNNER_TEMP/swiftformat"
+          unzip -q -o "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
+          # Must precede the runner's preinstalled /opt/homebrew/bin/swiftformat
+          echo "$RUNNER_TEMP/swiftformat" >> "$GITHUB_PATH"
+
+      - name: Toolchain versions
+        run: |
+          swiftformat --version
+          swift --version
+
+      - name: Lint Swift
+        run: task lint-tray
+
+      - name: Test tray
+        run: task test-tray
+
+      - name: Build tray
+        run: task build-tray
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.x
 
       - name: Build
         run: task build-ci

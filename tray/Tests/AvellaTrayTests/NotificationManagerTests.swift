@@ -5,108 +5,109 @@ import XCTest
 @MainActor
 final class NotificationManagerTests: XCTestCase {
 
-    private func makeFile(
-        _ name: String,
-        rule: String = "test",
-        action: String = "/dest",
-        dryRun: Bool = false,
-        time: String = "2026-03-27T10:00:00Z"
-    ) -> RecentFile {
-        let json = """
-        {
-            "filename": "\(name)",
-            "rule": "\(rule)",
-            "action": "\(action)",
-            "dry_run": \(dryRun),
-            "time": "\(time)"
-        }
-        """
-        return try! JSONDecoder.avella().decode(RecentFile.self, from: Data(json.utf8))
-    }
+  // MARK: Internal
 
-    // MARK: - countNewFiles
+  func testCountNewFilesEmptyPrevious() {
+    let mgr = NotificationManager()
+    let current = [makeFile("a.txt"), makeFile("b.txt")]
+    XCTAssertEqual(mgr.countNewFiles(current: current, previous: []), 2)
+  }
 
-    func testCountNewFilesEmptyPrevious() {
-        let mgr = NotificationManager()
-        let current = [makeFile("a.txt"), makeFile("b.txt")]
-        XCTAssertEqual(mgr.countNewFiles(current: current, previous: []), 2)
-    }
+  func testCountNewFilesNoChange() {
+    let mgr = NotificationManager()
+    let files = [makeFile("a.txt", time: "T1"), makeFile("b.txt", time: "T2")]
+    XCTAssertEqual(mgr.countNewFiles(current: files, previous: files), 0)
+  }
 
-    func testCountNewFilesNoChange() {
-        let mgr = NotificationManager()
-        let files = [makeFile("a.txt", time: "T1"), makeFile("b.txt", time: "T2")]
-        XCTAssertEqual(mgr.countNewFiles(current: files, previous: files), 0)
-    }
+  func testCountNewFilesOneNew() {
+    let mgr = NotificationManager()
+    let old = [makeFile("a.txt", time: "T1")]
+    let current = [makeFile("b.txt", time: "T2"), makeFile("a.txt", time: "T1")]
+    XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 1)
+  }
 
-    func testCountNewFilesOneNew() {
-        let mgr = NotificationManager()
-        let old = [makeFile("a.txt", time: "T1")]
-        let current = [makeFile("b.txt", time: "T2"), makeFile("a.txt", time: "T1")]
-        XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 1)
-    }
+  func testCountNewFilesMultipleNew() {
+    let mgr = NotificationManager()
+    let old = [makeFile("a.txt", time: "T1")]
+    let current = [
+      makeFile("c.txt", time: "T3"),
+      makeFile("b.txt", time: "T2"),
+      makeFile("a.txt", time: "T1"),
+    ]
+    XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 2)
+  }
 
-    func testCountNewFilesMultipleNew() {
-        let mgr = NotificationManager()
-        let old = [makeFile("a.txt", time: "T1")]
-        let current = [
-            makeFile("c.txt", time: "T3"),
-            makeFile("b.txt", time: "T2"),
-            makeFile("a.txt", time: "T1"),
-        ]
-        XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 2)
-    }
+  func testCountNewFilesCompletelyDifferent() {
+    let mgr = NotificationManager()
+    let old = [makeFile("old.txt", time: "T0")]
+    let current = [makeFile("x.txt", time: "T1"), makeFile("y.txt", time: "T2")]
+    // No match found, so all are considered new.
+    XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 2)
+  }
 
-    func testCountNewFilesCompletelyDifferent() {
-        let mgr = NotificationManager()
-        let old = [makeFile("old.txt", time: "T0")]
-        let current = [makeFile("x.txt", time: "T1"), makeFile("y.txt", time: "T2")]
-        // No match found, so all are considered new.
-        XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 2)
-    }
+  func testCountNewFilesMatchesOnAllThreeFields() {
+    let mgr = NotificationManager()
+    // Same filename and time but different rule — should NOT match.
+    let old = [makeFile("a.txt", rule: "ruleA", time: "T1")]
+    let current = [makeFile("a.txt", rule: "ruleB", time: "T1")]
+    XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 1)
+  }
 
-    func testCountNewFilesMatchesOnAllThreeFields() {
-        let mgr = NotificationManager()
-        // Same filename and time but different rule — should NOT match.
-        let old = [makeFile("a.txt", rule: "ruleA", time: "T1")]
-        let current = [makeFile("a.txt", rule: "ruleB", time: "T1")]
-        XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 1)
-    }
+  func testCountNewFilesIgnoresDryRunFlip() {
+    let mgr = NotificationManager()
+    // Daemon re-emits the head entry with dryRun flipped (dry-run toggle
+    // then real execution) while filename/time/rule stay the same — this
+    // must NOT be treated as a new file.
+    let old = [makeFile("a.txt", dryRun: true, time: "T1")]
+    let current = [makeFile("a.txt", dryRun: false, time: "T1")]
+    XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 0)
+  }
 
-    func testCountNewFilesIgnoresDryRunFlip() {
-        let mgr = NotificationManager()
-        // Daemon re-emits the head entry with dryRun flipped (dry-run toggle
-        // then real execution) while filename/time/rule stay the same — this
-        // must NOT be treated as a new file.
-        let old = [makeFile("a.txt", dryRun: true, time: "T1")]
-        let current = [makeFile("a.txt", dryRun: false, time: "T1")]
-        XCTAssertEqual(mgr.countNewFiles(current: current, previous: old), 0)
-    }
+  func testFirstUpdateSkipsAndStoresFiles() {
+    let mgr = NotificationManager()
+    XCTAssertTrue(mgr.firstUpdate)
 
-    // MARK: - handleStateUpdate first-update skip
+    let files = [makeFile("a.txt")]
+    mgr.handleStateUpdate(recentFiles: files)
 
-    func testFirstUpdateSkipsAndStoresFiles() {
-        let mgr = NotificationManager()
-        XCTAssertTrue(mgr.firstUpdate)
+    XCTAssertFalse(mgr.firstUpdate)
+    XCTAssertEqual(mgr.lastSeenFiles.count, 1)
+    XCTAssertEqual(mgr.lastSeenFiles[0].filename, "a.txt")
+  }
 
-        let files = [makeFile("a.txt")]
-        mgr.handleStateUpdate(recentFiles: files)
+  func testSecondUpdateTracksFiles() {
+    let mgr = NotificationManager()
 
-        XCTAssertFalse(mgr.firstUpdate)
-        XCTAssertEqual(mgr.lastSeenFiles.count, 1)
-        XCTAssertEqual(mgr.lastSeenFiles[0].filename, "a.txt")
-    }
+    // First update — skipped.
+    mgr.handleStateUpdate(recentFiles: [makeFile("a.txt", time: "T1")])
 
-    func testSecondUpdateTracksFiles() {
-        let mgr = NotificationManager()
+    // Second update — notifications disabled (setupDone is false), but state should still be tracked.
+    let newFiles = [makeFile("b.txt", time: "T2"), makeFile("a.txt", time: "T1")]
+    mgr.handleStateUpdate(recentFiles: newFiles)
 
-        // First update — skipped.
-        mgr.handleStateUpdate(recentFiles: [makeFile("a.txt", time: "T1")])
+    XCTAssertEqual(mgr.lastSeenFiles.count, 2)
+    XCTAssertEqual(mgr.lastSeenFiles[0].filename, "b.txt")
+  }
 
-        // Second update — notifications disabled (setupDone is false), but state should still be tracked.
-        let newFiles = [makeFile("b.txt", time: "T2"), makeFile("a.txt", time: "T1")]
-        mgr.handleStateUpdate(recentFiles: newFiles)
+  // MARK: Private
 
-        XCTAssertEqual(mgr.lastSeenFiles.count, 2)
-        XCTAssertEqual(mgr.lastSeenFiles[0].filename, "b.txt")
-    }
+  private func makeFile(
+    _ name: String,
+    rule: String = "test",
+    action: String = "/dest",
+    dryRun: Bool = false,
+    time: String = "2026-03-27T10:00:00Z",
+  ) -> RecentFile {
+    let json = """
+      {
+          "filename": "\(name)",
+          "rule": "\(rule)",
+          "action": "\(action)",
+          "dry_run": \(dryRun),
+          "time": "\(time)"
+      }
+      """
+    return try! JSONDecoder.avella().decode(RecentFile.self, from: Data(json.utf8))
+  }
+
 }

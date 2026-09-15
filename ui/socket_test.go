@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -351,7 +352,7 @@ func TestRemoveStaleSocketCleansUp(t *testing.T) {
 	}
 
 	// Should succeed — stale file removed.
-	if err := removeStaleSocket(sockPath); err != nil {
+	if err := removeStaleSocket(t.Context(), sockPath); err != nil {
 		t.Fatalf("removeStaleSocket failed: %v", err)
 	}
 	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
@@ -376,7 +377,7 @@ func TestRemoveStaleSocketDetectsActiveDaemon(t *testing.T) {
 	defer ln.Close()
 
 	// Should return errDaemonRunning.
-	err = removeStaleSocket(sockPath)
+	err = removeStaleSocket(t.Context(), sockPath)
 	if err == nil {
 		t.Fatal("expected error for active socket")
 	}
@@ -387,9 +388,67 @@ func TestRemoveStaleSocketDetectsActiveDaemon(t *testing.T) {
 
 func TestRemoveStaleSocketNonexistent(t *testing.T) {
 	// Should succeed when the socket file doesn't exist.
-	err := removeStaleSocket("/tmp/nonexistent-avella-test.sock")
+	err := removeStaleSocket(t.Context(), "/tmp/nonexistent-avella-test.sock")
 	if err != nil {
 		t.Fatalf("removeStaleSocket failed on nonexistent: %v", err)
+	}
+}
+
+func TestRemoveStaleSocketCanceledContextKeepsActiveSocket(t *testing.T) {
+	// A canceled lifecycle context must not make the probe conclude that a live
+	// daemon's socket is stale and unlink it.
+	_, sockPath, cancelServer := startTestServer(t)
+	defer cancelServer()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := removeStaleSocket(ctx, sockPath)
+	if !errors.Is(err, errDaemonRunning) {
+		t.Fatalf("expected errDaemonRunning for a live socket, got: %v", err)
+	}
+	if _, statErr := os.Stat(sockPath); statErr != nil {
+		t.Fatalf("active socket was removed: %v", statErr)
+	}
+}
+
+func TestOpenConfigDoesNotLeakGoroutines(t *testing.T) {
+	// exec.CommandContext spawns a watcher goroutine that only exits once the
+	// process is reaped or the context ends. Start without Wait therefore leaks
+	// one per click for as long as the daemon lives.
+	if runtime.GOOS != "darwin" {
+		t.Skip("open(1) is macOS-only")
+	}
+
+	u := NewSocket()
+	// A path open(1) rejects immediately: it exits non-zero without opening a
+	// window, so the test has no visible side effect.
+	u.SetConfigPath(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+
+	settle(t, runtime.NumGoroutine())
+	baseline := runtime.NumGoroutine()
+
+	const clicks = 5
+	for range clicks {
+		u.handleCommand(t.Context(), "open_config")
+	}
+
+	settle(t, baseline)
+	if leaked := runtime.NumGoroutine() - baseline; leaked >= clicks {
+		t.Fatalf("leaked %d goroutines after %d open_config commands", leaked, clicks)
+	}
+}
+
+// settle waits for the goroutine count to fall back to want, giving spawned
+// work a chance to finish before the caller samples it.
+func settle(t *testing.T, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -399,7 +458,7 @@ func TestDuplicateDaemonBlockedByActiveSocket(t *testing.T) {
 	defer cancel1()
 
 	// Attempting to remove the "stale" socket should detect the active daemon.
-	err := removeStaleSocket(sockPath)
+	err := removeStaleSocket(t.Context(), sockPath)
 	if err == nil {
 		t.Fatal("expected error for active socket")
 	}

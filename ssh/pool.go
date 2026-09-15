@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,13 +33,13 @@ func NewPool(hosts map[string]config.SSH) *Pool {
 
 // dial establishes an SSH connection to the named host.
 // Must be called with p.mu held.
-func (p *Pool) dial(name string) (*ssh.Client, error) {
+func (p *Pool) dial(ctx context.Context, name string) (*ssh.Client, error) {
 	hostCfg, ok := p.hosts[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown SSH host %q", name)
 	}
 
-	authMethod, err := p.authMethod(hostCfg)
+	authMethod, err := p.authMethod(ctx, hostCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func (p *Pool) dial(name string) (*ssh.Client, error) {
 // If a key file is configured, it uses public key auth.
 // Otherwise it falls back to the SSH agent (e.g. 1Password, ssh-agent) at
 // agent_sock, or SSH_AUTH_SOCK when agent_sock is unset.
-func (p *Pool) authMethod(hostCfg config.SSH) (ssh.AuthMethod, error) {
+func (p *Pool) authMethod(ctx context.Context, hostCfg config.SSH) (ssh.AuthMethod, error) {
 	if hostCfg.Key != "" {
 		keyData, err := os.ReadFile(hostCfg.Key)
 		if err != nil {
@@ -87,7 +88,8 @@ func (p *Pool) authMethod(hostCfg config.SSH) (ssh.AuthMethod, error) {
 		return nil, fmt.Errorf("no SSH key or agent_sock configured and SSH_AUTH_SOCK not set")
 	}
 
-	conn, err := net.Dial("unix", sock)
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", sock)
 	if err != nil {
 		return nil, fmt.Errorf("connect to SSH agent at %s: %w", sock, err)
 	}
@@ -98,7 +100,7 @@ func (p *Pool) authMethod(hostCfg config.SSH) (ssh.AuthMethod, error) {
 }
 
 // getConn returns a cached or new SSH connection for the named host.
-func (p *Pool) getConn(name string) (*ssh.Client, error) {
+func (p *Pool) getConn(ctx context.Context, name string) (*ssh.Client, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -114,7 +116,7 @@ func (p *Pool) getConn(name string) (*ssh.Client, error) {
 		delete(p.conns, name)
 	}
 
-	client, err := p.dial(name)
+	client, err := p.dial(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +127,8 @@ func (p *Pool) getConn(name string) (*ssh.Client, error) {
 // SFTP returns an SFTP client for the named host.
 // The caller should close the SFTP client when done, but the
 // underlying SSH connection is retained in the pool.
-func (p *Pool) SFTP(name string) (*sftp.Client, error) {
-	conn, err := p.getConn(name)
+func (p *Pool) SFTP(ctx context.Context, name string) (*sftp.Client, error) {
+	conn, err := p.getConn(ctx, name)
 	if err != nil {
 		return nil, err
 	}

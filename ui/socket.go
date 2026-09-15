@@ -133,7 +133,7 @@ func (u *SocketUI) Run(ctx context.Context, cancel context.CancelFunc, daemon fu
 	u.sockPath = sockPath
 
 	// Clean up stale socket file or detect a running daemon.
-	if staleErr := removeStaleSocket(sockPath); staleErr != nil {
+	if staleErr := removeStaleSocket(ctx, sockPath); staleErr != nil {
 		if errors.Is(staleErr, errDaemonRunning) {
 			slog.Error("cannot start: another daemon is already running", "path", sockPath)
 			cancel()
@@ -144,7 +144,8 @@ func (u *SocketUI) Run(ctx context.Context, cancel context.CancelFunc, daemon fu
 		return
 	}
 
-	ln, listenErr := net.Listen("unix", sockPath)
+	var lc net.ListenConfig
+	ln, listenErr := lc.Listen(ctx, "unix", sockPath)
 	if listenErr != nil {
 		slog.Error("failed to listen on socket", "path", sockPath, "error", listenErr)
 		daemon(ctx)
@@ -185,9 +186,10 @@ func (u *SocketUI) resolveSocketPath() (string, error) {
 	return filepath.Join(dir, socketFileName), nil
 }
 
-func removeStaleSocket(path string) error {
+func removeStaleSocket(ctx context.Context, path string) error {
 	// Check if something is already listening.
-	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "unix", path)
 	if err == nil {
 		_ = conn.Close()
 		return fmt.Errorf("socket %s is active: %w", path, errDaemonRunning)
@@ -240,11 +242,11 @@ func (u *SocketUI) handleClient(ctx context.Context, conn net.Conn) {
 			slog.Warn("invalid message from tray client", "error", err)
 			continue
 		}
-		u.handleCommand(msg.Command)
+		u.handleCommand(ctx, msg.Command)
 	}
 }
 
-func (u *SocketUI) handleCommand(cmd string) {
+func (u *SocketUI) handleCommand(ctx context.Context, cmd string) {
 	switch cmd {
 	case "toggle_dry_run":
 		u.mu.Lock()
@@ -267,7 +269,7 @@ func (u *SocketUI) handleCommand(cmd string) {
 		path := u.st.ConfigPath
 		u.mu.Unlock()
 		if path != "" {
-			if err := exec.Command("open", path).Start(); err != nil {
+			if err := exec.CommandContext(ctx, "open", path).Start(); err != nil {
 				slog.Error("failed to open config file", "path", path, "error", err)
 			}
 		}

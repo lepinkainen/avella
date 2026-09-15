@@ -351,7 +351,7 @@ func TestRemoveStaleSocketCleansUp(t *testing.T) {
 	}
 
 	// Should succeed — stale file removed.
-	if err := removeStaleSocket(sockPath); err != nil {
+	if err := removeStaleSocket(t.Context(), sockPath); err != nil {
 		t.Fatalf("removeStaleSocket failed: %v", err)
 	}
 	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
@@ -376,7 +376,7 @@ func TestRemoveStaleSocketDetectsActiveDaemon(t *testing.T) {
 	defer ln.Close()
 
 	// Should return errDaemonRunning.
-	err = removeStaleSocket(sockPath)
+	err = removeStaleSocket(t.Context(), sockPath)
 	if err == nil {
 		t.Fatal("expected error for active socket")
 	}
@@ -387,7 +387,7 @@ func TestRemoveStaleSocketDetectsActiveDaemon(t *testing.T) {
 
 func TestRemoveStaleSocketNonexistent(t *testing.T) {
 	// Should succeed when the socket file doesn't exist.
-	err := removeStaleSocket("/tmp/nonexistent-avella-test.sock")
+	err := removeStaleSocket(t.Context(), "/tmp/nonexistent-avella-test.sock")
 	if err != nil {
 		t.Fatalf("removeStaleSocket failed on nonexistent: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestDuplicateDaemonBlockedByActiveSocket(t *testing.T) {
 	defer cancel1()
 
 	// Attempting to remove the "stale" socket should detect the active daemon.
-	err := removeStaleSocket(sockPath)
+	err := removeStaleSocket(t.Context(), sockPath)
 	if err == nil {
 		t.Fatal("expected error for active socket")
 	}

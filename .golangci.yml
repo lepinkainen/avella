@@ -15,13 +15,44 @@ linters:
     - misspell
     - gocritic
     - revive
+    - errorlint # forces errors.Is / errors.As over == comparison
+    - bodyclose # catches missing resp.Body.Close()
+    - contextcheck # context.Context propagation
+    - sqlclosecheck # *sql.Rows / *sql.Stmt close hygiene
+    - noctx # HTTP requests without a context
+    - gosec # common security smells
+    - unparam # always-nil error returns, unused params
+    - gocyclo # cyclomatic complexity guard
   exclusions:
     paths:
       - llm-shared
+    # Rule-scoped, not a blanket `gosec` disable: every other gosec check stays
+    # live. These four fire on the things this daemon exists to do.
+    rules:
+      - linters: [gosec]
+        # G304: opening a path held in a variable. Avella's entire job is acting
+        # on paths the user configured and files the watcher discovered.
+        text: "G304"
+      - linters: [gosec]
+        # G204: subprocess with variable arguments. The exec action runs the
+        # command the config names; notify shells out to osascript.
+        text: "G204"
+      - linters: [gosec]
+        # G110: decompression bomb. validate_zip must read every entry in full
+        # to verify its CRC-32 — that is the check, not a mistake.
+        path: actions/validate_zip.go
+        text: "G110"
+      - linters: [gosec]
+        # G704: taint-analysis SSRF on a unix socket path read from our own
+        # config. No network, no attacker-controlled host.
+        path: ssh/pool.go
+        text: "G704"
   settings:
     govet:
       enable:
         - shadow
+    gocyclo:
+      min-complexity: 15
     gocritic:
       enabled-tags:
         - diagnostic

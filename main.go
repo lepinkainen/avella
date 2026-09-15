@@ -312,70 +312,76 @@ func startConfigReloader(ctx context.Context, cfgPath string, watchDirs []string
 
 	slog.Info("watching config for changes", "path", cfgPath)
 
-	go func() {
-		defer func() {
-			if closeErr := cfgWatcher.Close(); closeErr != nil {
-				slog.Warn("failed to close config watcher", "error", closeErr)
-			}
-		}()
-
-		var reloadTimer *time.Timer
-		var reloadCh <-chan time.Time
-
-		scheduleReload := func() {
-			if reloadTimer == nil {
-				reloadTimer = time.NewTimer(300 * time.Millisecond)
-				reloadCh = reloadTimer.C
-				return
-			}
-			if !reloadTimer.Stop() {
-				select {
-				case <-reloadTimer.C:
-				default:
-				}
-			}
-			reloadTimer.Reset(300 * time.Millisecond)
-		}
-		defer func() {
-			if reloadTimer != nil {
-				reloadTimer.Stop()
-			}
-		}()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case event, ok := <-cfgWatcher.Events:
-				if !ok {
-					return
-				}
-				if filepath.Base(event.Name) != watcherBase {
-					continue
-				}
-				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Chmod) == 0 {
-					continue
-				}
-				slog.Debug("config file changed", "path", event.Name, "op", event.Op.String())
-				scheduleReload()
-			case err, ok := <-cfgWatcher.Errors:
-				if !ok {
-					return
-				}
-				slog.Warn("config watcher error", "error", err)
-			case <-reloadCh:
-				reloadCh = nil
-				reloadConfig(cfgPath, watchDirs, runtime, u)
-			}
-		}
-	}()
+	go watchConfigFile(ctx, cfgWatcher, watcherBase, func() {
+		reloadConfig(ctx, cfgPath, watchDirs, runtime, u)
+	})
 }
 
-func reloadConfig(cfgPath string, watchDirs []string, runtime *runtimeState, u ui.UI) {
+// watchConfigFile debounces fsnotify events for the file named base and calls
+// reload 300ms after the last one, until ctx is done or the watcher closes.
+func watchConfigFile(ctx context.Context, cfgWatcher *fsnotify.Watcher, watcherBase string, reload func()) {
+	defer func() {
+		if closeErr := cfgWatcher.Close(); closeErr != nil {
+			slog.Warn("failed to close config watcher", "error", closeErr)
+		}
+	}()
+
+	var reloadTimer *time.Timer
+	var reloadCh <-chan time.Time
+
+	scheduleReload := func() {
+		if reloadTimer == nil {
+			reloadTimer = time.NewTimer(300 * time.Millisecond)
+			reloadCh = reloadTimer.C
+			return
+		}
+		if !reloadTimer.Stop() {
+			select {
+			case <-reloadTimer.C:
+			default:
+			}
+		}
+		reloadTimer.Reset(300 * time.Millisecond)
+	}
+	defer func() {
+		if reloadTimer != nil {
+			reloadTimer.Stop()
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-cfgWatcher.Events:
+			if !ok {
+				return
+			}
+			if filepath.Base(event.Name) != watcherBase {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Chmod) == 0 {
+				continue
+			}
+			slog.Debug("config file changed", "path", event.Name, "op", event.Op.String())
+			scheduleReload()
+		case err, ok := <-cfgWatcher.Errors:
+			if !ok {
+				return
+			}
+			slog.Warn("config watcher error", "error", err)
+		case <-reloadCh:
+			reloadCh = nil
+			reload()
+		}
+	}
+}
+
+func reloadConfig(ctx context.Context, cfgPath string, watchDirs []string, runtime *runtimeState, u ui.UI) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		slog.Error("config reload failed", "path", cfgPath, "error", err)
-		notifyReload(fmt.Sprintf("Config reload failed: %v", err))
+		notifyReload(ctx, fmt.Sprintf("Config reload failed: %v", err))
 		return
 	}
 
@@ -393,7 +399,7 @@ func reloadConfig(cfgPath string, watchDirs []string, runtime *runtimeState, u u
 			}
 		}
 		slog.Error("config reload failed", "path", cfgPath, "error", err)
-		notifyReload(fmt.Sprintf("Config reload failed: %v", err))
+		notifyReload(ctx, fmt.Sprintf("Config reload failed: %v", err))
 		return
 	}
 
@@ -406,11 +412,11 @@ func reloadConfig(cfgPath string, watchDirs []string, runtime *runtimeState, u u
 		msg += "; restart required for watch dir changes"
 	}
 	slog.Info("config reloaded", "path", cfgPath, "rules", len(cfg.Rules), "ssh_hosts", len(cfg.SSHHosts), "watch_dirs_changed", watchChanged)
-	notifyReload(msg)
+	notifyReload(ctx, msg)
 }
 
-func notifyReload(msg string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func notifyReload(ctx context.Context, msg string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	script := fmt.Sprintf(`display notification %q with title "Avella"`, msg)

@@ -37,7 +37,7 @@ func (a *MoveAction) Execute(_ context.Context, path string) error {
 		return fmt.Errorf("resolve dest for %s: %w", path, err)
 	}
 
-	if mkdirErr := os.MkdirAll(destDir, 0o755); mkdirErr != nil {
+	if mkdirErr := os.MkdirAll(destDir, 0o750); mkdirErr != nil {
 		return fmt.Errorf("create dest dir %s: %w", destDir, mkdirErr)
 	}
 
@@ -50,8 +50,7 @@ func (a *MoveAction) Execute(_ context.Context, path string) error {
 	}
 
 	// Fall back to copy+remove for cross-device moves
-	var linkErr *os.LinkError
-	if !errors.As(err, &linkErr) {
+	if _, ok := errors.AsType[*os.LinkError](err); !ok {
 		return fmt.Errorf("rename %s to %s: %w", path, dest, err)
 	}
 

@@ -33,7 +33,7 @@ func TestAuthMethodAgentSockOverridesEnv(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")
 
 	p := NewPool(nil)
-	if _, err := p.authMethod(config.SSH{AgentSock: sock}); err != nil {
+	if _, err := p.authMethod(t.Context(), config.SSH{AgentSock: sock}); err != nil {
 		t.Fatalf("agent_sock should be used instead of SSH_AUTH_SOCK: %v", err)
 	}
 	if err := p.Close(); err != nil {
@@ -46,7 +46,7 @@ func TestAuthMethodFallsBackToEnv(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", sock)
 
 	p := NewPool(nil)
-	if _, err := p.authMethod(config.SSH{}); err != nil {
+	if _, err := p.authMethod(t.Context(), config.SSH{}); err != nil {
 		t.Fatalf("SSH_AUTH_SOCK fallback: %v", err)
 	}
 	if err := p.Close(); err != nil {
@@ -58,7 +58,7 @@ func TestAuthMethodNoAgentConfigured(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 
 	p := NewPool(nil)
-	if _, err := p.authMethod(config.SSH{}); err == nil {
+	if _, err := p.authMethod(t.Context(), config.SSH{}); err == nil {
 		t.Fatal("expected error when no key, agent_sock or SSH_AUTH_SOCK")
 	}
 }

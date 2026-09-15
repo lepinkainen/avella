@@ -50,8 +50,27 @@ func (a *SCPAction) Execute(ctx context.Context, filePath string) (retErr error)
 		}
 	}()
 
+	// io.Copy over SFTP watches no context, so cancellation has to reach the
+	// transfer some other way: closing the session unblocks an in-flight or
+	// stalled copy. This client is created per call and the pooled SSH
+	// connection underneath it survives, so only this upload is affected.
+	transferDone := make(chan struct{})
+	defer close(transferDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = sftpClient.Close()
+		case <-transferDone:
+		}
+	}()
+
 	remotePath, written, err := uploadFile(sftpClient, destDir, filePath)
 	if err != nil {
+		// A cancelled transfer surfaces as some I/O error from the closed
+		// session; report why it actually stopped.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("upload %s to %s cancelled: %w", filePath, a.Host, ctxErr)
+		}
 		return fmt.Errorf("upload %s to %s: %w", filePath, a.Host, err)
 	}
 

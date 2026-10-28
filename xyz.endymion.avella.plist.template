@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Avella launchd agent template.
+
+  __HOME__ is replaced with the current user's home directory at install time.
+  launchd does not expand ~ or $HOME, so paths must be absolute.
+
+  Install (done for you by `task install`):
+    sed "s|__HOME__|$HOME|g" xyz.endymion.avella.plist.template \
+      > ~/Library/LaunchAgents/xyz.endymion.avella.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/xyz.endymion.avella.plist
+
+  Uninstall (`task uninstall`):
+    launchctl bootout gui/$(id -u)/xyz.endymion.avella
+    rm ~/Library/LaunchAgents/xyz.endymion.avella.plist
+
+  Logging: avella writes its own size-rotated log to
+  ~/Library/Logs/avella/avella.log. StandardOutPath/StandardErrorPath only
+  catch output from before logging is initialised (e.g. a crash on startup).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>xyz.endymion.avella</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/avella</string>
+        <string>--config</string>
+        <string>__HOME__/.config/avella/config.yaml</string>
+        <string>--log-file</string>
+        <string>__HOME__/Library/Logs/avella/avella.log</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/avella/launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/avella/launchd.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

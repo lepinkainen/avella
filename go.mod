@@ -9,6 +9,7 @@ require (
 	github.com/pkg/sftp v1.13.11
 	github.com/spf13/viper v1.21.0
 	golang.org/x/crypto v0.57.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (

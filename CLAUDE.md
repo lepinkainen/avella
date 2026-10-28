@@ -37,7 +37,7 @@ Processing pipeline: **fsnotify event → skip temp files → wait for stable si
 | `ssh/` | SSH connection pool with lazy dial, keepalive health checks, SFTP client. Used by `SCPAction` |
 | `internal/pathutil/` | `ExpandHome()` for tilde expansion |
 
-`main.go` wires everything together: kong CLI → config → engine → watcher → process loop. Graceful shutdown via SIGINT/SIGTERM context.
+`main.go` wires everything together: kong CLI → config → engine → watcher → process loop. `logging.go` builds the slog handler: stderr by default, or a size-rotated file (lumberjack) when `--log-file` is set, which the launchd plist uses. Graceful shutdown via SIGINT/SIGTERM context.
 
 ## Conventions
 

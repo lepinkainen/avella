@@ -166,7 +166,10 @@ tasks:
       - sudo install -m 755 build/avella /usr/local/bin/avella
       - sudo rm -rf /Applications/AvellaTray.app
       - sudo cp -R build/AvellaTray.app /Applications/
-      - cp xyz.endymion.avella.plist ~/Library/LaunchAgents/
+      - mkdir -p ~/Library/LaunchAgents ~/Library/Logs/avella
+      # Render the template: launchd does not expand ~ or $HOME, so bake in absolute paths.
+      - sed "s|__HOME__|$HOME|g" xyz.endymion.avella.plist.template > ~/Library/LaunchAgents/xyz.endymion.avella.plist
+      - plutil -lint ~/Library/LaunchAgents/xyz.endymion.avella.plist
       - launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/xyz.endymion.avella.plist
 
   uninstall:

@@ -23,7 +23,6 @@ import (
 	"github.com/lepinkainen/avella/stabilizer"
 	"github.com/lepinkainen/avella/ui"
 	"github.com/lepinkainen/avella/watcher"
-	"github.com/lepinkainen/humanlog"
 )
 
 // Version is set at build time via ldflags.
@@ -31,6 +30,7 @@ var Version = "dev"
 
 type CLI struct {
 	Config  string `short:"c" help:"Path to config file." default:"" env:"AVELLA_CONFIG"`
+	LogFile string `help:"Write logs to this file (size-rotated) instead of stderr." name:"log-file" env:"AVELLA_LOG_FILE"`
 	Verbose bool   `short:"v" help:"Enable verbose logging."`
 	DryRun  bool   `help:"Log actions without executing them." name:"dry-run"`
 	Once    bool   `help:"Process existing files in watch directories once and exit."`
@@ -120,13 +120,25 @@ func main() {
 	if cli.Verbose {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(humanlog.NewHandler(os.Stderr, &humanlog.Options{Level: level})))
+	logHandler, logCloser, err := newLogHandler(cli.LogFile, level)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to set up logging:", err)
+		os.Exit(1)
+	}
+	if logCloser != nil {
+		defer func() {
+			if closeErr := logCloser.Close(); closeErr != nil {
+				fmt.Fprintln(os.Stderr, "failed to close log file:", closeErr)
+			}
+		}()
+	}
+	slog.SetDefault(slog.New(logHandler))
 
 	cfgPath := cli.Config
 	if cfgPath == "" {
 		cfgPath = config.DefaultConfigPath()
 	}
-	if expandedCfgPath, err := pathutil.ExpandHome(cfgPath); err == nil {
+	if expandedCfgPath, expandErr := pathutil.ExpandHome(cfgPath); expandErr == nil {
 		cfgPath = expandedCfgPath
 	}
 

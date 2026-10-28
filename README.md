@@ -78,11 +78,12 @@ avella -c config.yaml      # custom config path
 avella --dry-run           # log actions without executing
 avella --once              # process existing files and exit
 avella -v                  # verbose logging
+avella --log-file ~/Library/Logs/avella/avella.log   # log to a rotating file instead of stderr
 ```
 
 ## Installation
 
-This is a personal project — there's no package or installer. Fork the repo and build it yourself. The example [`xyz.endymion.avella.plist`](xyz.endymion.avella.plist) can be used to run the daemon as a launchd service on macOS. The menu bar app manages its own autostart via its Settings window's Launch at Login toggle — no launchd agent needed for it.
+This is a personal project — there's no package or installer. Fork the repo and build it yourself. `task install` builds everything, installs the binary and menu bar app, and renders [`xyz.endymion.avella.plist.template`](xyz.endymion.avella.plist.template) into `~/Library/LaunchAgents/` with your home directory baked in (launchd does not expand `~`). The daemon logs to `~/Library/Logs/avella/avella.log` (size-rotated, 10 MB × 3); anything launchd catches before logging starts goes to `launchd.log` in the same directory. The menu bar app manages its own autostart via its Settings window's Launch at Login toggle — no launchd agent needed for it.
 
 ## License
 

@@ -3,7 +3,7 @@ module github.com/lepinkainen/avella
 go 1.27
 
 require (
-	github.com/alecthomas/kong v1.16.1
+	github.com/alecthomas/kong v1.17.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/lepinkainen/humanlog v0.2.1
 	github.com/pkg/sftp v1.13.11
